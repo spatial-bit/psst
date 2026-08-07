@@ -1,7 +1,7 @@
 # Progress
 
-Current slice: 2 — Relay and typed client  
-Current gate: Slice 1 satisfied; merge pending  
+Current slice: 2 — Relay and typed client
+Current gate: Slice 1 satisfied; merge pending
 Last reconciled: 2026-08-07
 
 ## Verified
