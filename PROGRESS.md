@@ -1,7 +1,7 @@
 # Progress
 
-Current slice: 1 — Core model and SQLite durability  
-Current gate: not yet satisfied  
+Current slice: 2 — Relay and typed client  
+Current gate: Slice 1 satisfied; merge pending  
 Last reconciled: 2026-08-07
 
 ## Verified
@@ -21,14 +21,17 @@ Last reconciled: 2026-08-07
 - W-105 durable message submission independently reviewed and locally verified: persist-before-success, scoped idempotency, ambiguous-commit recovery, authorization, integrity metadata, concurrency, restart, and stable errors.
 - W-105 cross-platform PR evidence passed on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31218581813>.
 - W-106 inbox and acknowledgement independently reviewed and locally verified: cursorless replay, sequence order, bounded indexed reads, recipient-only atomic acknowledgement, restart, rollback, and corruption handling.
+- W-106 cross-platform PR evidence passed on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31219378486>.
+- W-107 Slice 1 reliability gate independently approved: 80 tests, repeated stress, real held-lock contention, mid-ack rollback, and abrupt-process commit-boundary evidence.
+- W-107 revision `4c8e094` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31220050245>.
 
 ## Active
 
-- W-107 Slice 1 reliability gate — ready after W-106 commit and CI evidence.
+- Merge reviewed Slice 1 draft PR #1 to `main`.
 
 ## Ready
 
-- Slice 2 relay and CLI planning is ready, blocked on the Slice 1 merge gate.
+- Decompose Slice 2 relay and typed-client work units from the approved PRD.
 
 ## Gate evidence
 
@@ -39,4 +42,4 @@ Last reconciled: 2026-08-07
 
 ## Next coordinator action
 
-Commit W-106, capture PR CI evidence, then execute W-107 reliability and merge review.
+Merge Slice 1, confirm `main` green, then begin Slice 2 relay and typed-client work units.

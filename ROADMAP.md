@@ -8,7 +8,7 @@ Gate: formatting, linting, and tests pass on Windows, Linux, and macOS; public d
 
 ## Slice 1 — Core model and SQLite durability
 
-Status: ready
+Status: verified
 
 Core types, migrations, transactions, squads, memberships, instances, messages, leases, idempotency, and acknowledgements.
 
@@ -27,6 +27,8 @@ W-101 Core domain model
 Gate: migration, restart persistence, idempotency, uniqueness, lease, replay, and acknowledgement tests pass against real temporary SQLite databases; workspace formatting, linting, and tests pass on Windows, Linux, and macOS.
 
 ## Slice 2 — Relay and typed client
+
+Status: active
 
 Versioned HTTP API, long polling, structured errors, shutdown, health, and typed Rust client.
 

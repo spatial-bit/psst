@@ -1,6 +1,6 @@
 # W-107: Slice 1 reliability and evidence gate
 
-Status: pending
+Status: verified
 
 ## Objective
 
@@ -49,3 +49,12 @@ No relay, HTTP, client, CLI, MCP, activation, packaging, or feature expansion.
 - Do not weaken `synchronous`, busy timeout, constraints, or assertions to remove failures.
 - Any data-loss, token-exposure, cross-squad, or acknowledgement-authority defect blocks the gate.
 
+## Verification evidence
+
+- Independently audited and approved at revision `4c8e094` on 2026-08-07.
+- `cargo fmt --check` passed on Windows.
+- `cargo clippy --workspace --all-targets -- -D warnings` passed on Windows.
+- `cargo test --workspace` passed: 17 core tests, 63 store tests, 0 failed, 0 ignored, and all doc tests.
+- Repeated stress passed: 20 contention runs, 20 mid-ack rollback/reopen runs, 10 abrupt-process acknowledgement-boundary runs, plus the prior 100 concurrency/race/rollback executions.
+- Real-file evidence covers held-lock `database_busy` and recovery, mid-batch mutation rollback, abrupt process death before and after committed acknowledgement, migrations, restart, offline delivery, ambiguous commit, replay, name claims, expiry/resume, and bounded indexed inbox work.
+- GitHub Actions passed on Windows, Linux, and macOS for revision `4c8e094`: <https://github.com/spatial-bit/psst/actions/runs/31220050245>.
