@@ -6,6 +6,13 @@ use std::time::Duration;
 use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 
+mod repository;
+
+pub use repository::{
+    CreateSquad, JoinMembership, MembershipRecord, RepositoryError, RosterMember, SquadRecord,
+    TransportPresence,
+};
+
 const APPLICATION_ID: i32 = 0x5053_5354; // "PSST"
 const BUSY_TIMEOUT: Duration = Duration::from_millis(2_000);
 const JOURNAL_RETRY_INTERVAL: Duration = Duration::from_millis(10);
@@ -115,6 +122,15 @@ impl Store {
     /// Returns an error when the migration metadata cannot be read.
     pub fn schema_version(&self) -> Result<i64, StoreError> {
         Ok(current_version(&self.connection)?.unwrap_or(0))
+    }
+
+    /// Opens a second fully configured connection to the same database file.
+    ///
+    /// Callers should normally open a new [`Store`] with [`Store::open`]. This
+    /// method intentionally remains absent: a store does not retain or reveal its
+    /// filesystem path, preventing accidental creation of unconfigured connections.
+    fn connection_mut(&mut self) -> &mut Connection {
+        &mut self.connection
     }
 }
 

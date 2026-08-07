@@ -34,6 +34,13 @@ macro_rules! text_value {
                 f.write_str(&self.0)
             }
         }
+        impl std::str::FromStr for $name {
+            type Err = InvalidValue;
+
+            fn from_str(value: &str) -> Result<Self, Self::Err> {
+                Self::new(value)
+            }
+        }
     };
 }
 

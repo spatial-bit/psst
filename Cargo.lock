@@ -184,6 +184,7 @@ version = "0.0.0"
 name = "psst-store"
 version = "0.0.0"
 dependencies = [
+ "psst-core",
  "rusqlite",
  "sha2",
  "tempfile",

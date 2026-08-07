@@ -1,6 +1,6 @@
 # W-103: Squad and membership transactions
 
-Status: pending
+Status: verified
 
 ## Objective
 
@@ -50,3 +50,11 @@ Do not implement resume, heartbeat, messaging, HTTP, or CLI behavior.
 - Joining must not overwrite an existing mission or revive an archived squad.
 - Errors must preserve stable domain codes without exposing SQL text.
 
+## Verification evidence
+
+- Independent review completed 2026-08-07; leave authorization was hardened from reusable routing name to immutable `(SquadId, MembershipId)` identity before approval.
+- Roster projection now includes mode and a validated availability observation; offline or absent transport is always `unknown/unknown` at the observation time.
+- `cargo fmt --check` passed on Windows.
+- `cargo clippy --workspace --all-targets -- -D warnings` passed on Windows.
+- `cargo test --workspace` passed on Windows: 17 core tests, 28 store tests, and all doc tests.
+- Evidence includes independent-connection name claims, archive/join serialization, restart persistence, every multi-write rollback boundary, stale-owner/name-reuse safety, archived reads, cross-squad name reuse, and sanitized stable errors.

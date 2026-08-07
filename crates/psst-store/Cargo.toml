@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+psst-core = { path = "../psst-core" }
 rusqlite.workspace = true
 sha2.workspace = true
 
