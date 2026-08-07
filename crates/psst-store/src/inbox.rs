@@ -88,6 +88,14 @@ impl Store {
         &mut self,
         request: &AcknowledgeMessages,
     ) -> Result<(), RepositoryError> {
+        self.acknowledge_messages_with_fault(request, false)
+    }
+
+    fn acknowledge_messages_with_fault(
+        &mut self,
+        request: &AcknowledgeMessages,
+        fail_after_first_update: bool,
+    ) -> Result<(), RepositoryError> {
         if !(1..=MAX_ACK_MESSAGES).contains(&request.message_ids.len()) {
             return Err(RepositoryError::InvalidRequest);
         }
@@ -111,7 +119,7 @@ impl Store {
                 return Err(RepositoryError::NotFound);
             }
         }
-        for id in distinct {
+        for (index, id) in distinct.into_iter().enumerate() {
             transaction.execute(
                 "UPDATE messages SET acknowledged_at = ?3
                  WHERE id = ?1 AND recipient_membership_id = ?2
@@ -122,6 +130,9 @@ impl Store {
                     request.acknowledged_at.as_i64()
                 ],
             )?;
+            if fail_after_first_update && index == 0 {
+                return Err(RepositoryError::InjectedFailure);
+            }
         }
         transaction.commit()?;
         Ok(())
@@ -203,6 +214,9 @@ fn map_decode_error(error: rusqlite::Error) -> RepositoryError {
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
+    use std::time::Duration;
+
     use psst_core::{
         AgentId, CorrelationId, DedupeKey, MemberName, Mission, Role, SquadId, SquadName,
     };
@@ -578,5 +592,169 @@ mod tests {
             }),
             Err(RepositoryError::InvalidStoredData)
         ));
+    }
+
+    #[test]
+    fn busy_writer_returns_stable_error_without_mutation_then_recovers() {
+        let mut fixture = Fixture::new();
+        let recipient = fixture.recipient.clone();
+        let message = fixture.send(
+            "busy",
+            recipient.clone(),
+            "mail".into(),
+            MessagePriority::Normal,
+        );
+        let mut contender = Store::open(&fixture.path).unwrap();
+        contender
+            .connection
+            .busy_timeout(Duration::from_millis(20))
+            .unwrap();
+        let lock = fixture
+            .store
+            .connection_mut()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        let request = AcknowledgeMessages {
+            recipient: recipient.clone(),
+            message_ids: vec![message.id.clone()],
+            acknowledged_at: time(20),
+        };
+        let error = contender.acknowledge_messages(&request).unwrap_err();
+        assert!(matches!(error, RepositoryError::DatabaseBusy));
+        assert_eq!(error.code(), psst_core::ErrorCode::DatabaseBusy);
+        assert_eq!(
+            contender
+                .pending_inbox(&InboxQuery {
+                    recipient: recipient.clone(),
+                    limit: 100,
+                })
+                .unwrap(),
+            vec![message]
+        );
+        drop(lock);
+        contender.acknowledge_messages(&request).unwrap();
+        assert!(
+            contender
+                .pending_inbox(&InboxQuery {
+                    recipient,
+                    limit: 100,
+                })
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn injected_mid_batch_ack_failure_rolls_back_across_reopen() {
+        let mut fixture = Fixture::new();
+        let recipient = fixture.recipient.clone();
+        let first = fixture.send(
+            "fault-one",
+            recipient.clone(),
+            "first".into(),
+            MessagePriority::Normal,
+        );
+        let second = fixture.send(
+            "fault-two",
+            recipient.clone(),
+            "second".into(),
+            MessagePriority::Normal,
+        );
+        let error = fixture
+            .store
+            .acknowledge_messages_with_fault(
+                &AcknowledgeMessages {
+                    recipient: recipient.clone(),
+                    message_ids: vec![first.id.clone(), second.id.clone()],
+                    acknowledged_at: time(20),
+                },
+                true,
+            )
+            .unwrap_err();
+        assert!(matches!(error, RepositoryError::InjectedFailure));
+        let path = fixture.path.clone();
+        drop(fixture.store);
+        fixture.store = Store::open(path).unwrap();
+        assert_eq!(fixture.inbox(&recipient, 100), vec![first, second]);
+        let acknowledged: i64 = fixture
+            .store
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE acknowledged_at IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(acknowledged, 0);
+    }
+
+    #[test]
+    fn abrupt_death_before_and_after_ack_preserves_commit_boundary() {
+        for (mode, should_replay) in [("before", true), ("after", false)] {
+            let mut fixture = Fixture::new();
+            let recipient = fixture.recipient.clone();
+            let message = fixture.send(
+                &format!("abrupt-{mode}"),
+                recipient.clone(),
+                "mail".into(),
+                MessagePriority::Normal,
+            );
+            let output = Command::new(std::env::current_exe().unwrap())
+                .arg("--exact")
+                .arg("inbox::tests::abrupt_death_child")
+                .arg("--nocapture")
+                .env("PSST_TEST_ABRUPT_DB", &fixture.path)
+                .env("PSST_TEST_ABRUPT_MODE", mode)
+                .env("PSST_TEST_ABRUPT_RECIPIENT", recipient.as_str())
+                .env("PSST_TEST_ABRUPT_MESSAGE", message.id.as_str())
+                .output()
+                .unwrap();
+            assert_eq!(
+                output.status.code(),
+                Some(23),
+                "child did not exit at the failpoint: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let path = fixture.path.clone();
+            drop(fixture.store);
+            fixture.store = Store::open(path).unwrap();
+            let pending = fixture.inbox(&recipient, 100);
+            if should_replay {
+                assert_eq!(pending, vec![message]);
+            } else {
+                assert!(pending.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn abrupt_death_child() {
+        let Ok(path) = std::env::var("PSST_TEST_ABRUPT_DB") else {
+            return;
+        };
+        let mode = std::env::var("PSST_TEST_ABRUPT_MODE").unwrap();
+        let recipient =
+            MembershipId::new(std::env::var("PSST_TEST_ABRUPT_RECIPIENT").unwrap()).unwrap();
+        let message = MessageId::new(std::env::var("PSST_TEST_ABRUPT_MESSAGE").unwrap()).unwrap();
+        let mut store = Store::open(path).unwrap();
+        let pending = store
+            .pending_inbox(&InboxQuery {
+                recipient: recipient.clone(),
+                limit: 100,
+            })
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+        match mode.as_str() {
+            "before" => {}
+            "after" => store
+                .acknowledge_messages(&AcknowledgeMessages {
+                    recipient,
+                    message_ids: vec![message],
+                    acknowledged_at: time(20),
+                })
+                .unwrap(),
+            _ => panic!("unknown abrupt-death mode"),
+        }
+        std::process::exit(23);
     }
 }
