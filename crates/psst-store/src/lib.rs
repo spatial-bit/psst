@@ -6,11 +6,13 @@ use std::time::Duration;
 use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 
+mod authenticated;
 mod inbox;
 mod instance;
 mod message;
 mod repository;
 
+pub use authenticated::{AuthenticatedSession, JoinAndClaim, JoinAndClaimOutcome, TranscriptQuery};
 pub use inbox::{
     AcknowledgeMessages, InboxQuery, MAX_ACK_MESSAGES, MAX_INBOX_MESSAGES, MAX_INBOX_OUTPUT_BYTES,
 };
@@ -62,6 +64,7 @@ pub enum StoreError {
     MigrationChecksumMismatch { version: i64 },
     InvalidMigrationLedger { expected: i64, actual: i64 },
     InvalidMigrationPlan(&'static str),
+    WorkerUnavailable,
 }
 
 impl std::fmt::Display for StoreError {
@@ -89,6 +92,7 @@ impl std::fmt::Display for StoreError {
                 "migration ledger expected version {expected} but found {actual}"
             ),
             Self::InvalidMigrationPlan(message) => formatter.write_str(message),
+            Self::WorkerUnavailable => formatter.write_str("store worker could not start"),
         }
     }
 }
@@ -141,6 +145,35 @@ impl Store {
     /// Returns an error when the migration metadata cannot be read.
     pub fn schema_version(&self) -> Result<i64, StoreError> {
         Ok(current_version(&self.connection)?.unwrap_or(0))
+    }
+
+    /// Verifies that the connection is usable and the embedded schema is current.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable store error when the query fails or the schema is incompatible.
+    pub fn readiness(&self) -> Result<(), StoreError> {
+        let version = self.schema_version()?;
+        let supported = MIGRATIONS.last().map_or(0, |migration| migration.version);
+        if version != supported {
+            return Err(StoreError::FutureSchema {
+                database: version,
+                supported,
+            });
+        }
+        self.connection.query_row("SELECT 1", [], |_| Ok(()))?;
+        Ok(())
+    }
+
+    /// Performs a bounded passive WAL checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable store error when `SQLite` cannot complete the checkpoint.
+    pub fn checkpoint(&self) -> Result<(), StoreError> {
+        self.connection
+            .pragma_update(None, "wal_checkpoint", "PASSIVE")?;
+        Ok(())
     }
 
     /// Opens a second fully configured connection to the same database file.

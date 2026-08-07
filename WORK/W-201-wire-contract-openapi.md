@@ -62,3 +62,4 @@ Do not implement sockets, handlers, database access, token persistence, CLI, MCP
 - `cargo fmt --check` passed on Windows.
 - `cargo clippy --workspace --all-targets -- -D warnings` passed on Windows.
 - `cargo test --workspace` passed on Windows: 17 core tests, 18 protocol tests, 63 store tests, and all doc tests.
+- GitHub Actions passed on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31223796106>.

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/psst-core", "crates/psst-protocol", "crates/psst-store"]
+members = ["crates/psst-core", "crates/psst-protocol", "crates/psst-store", "crates/psst-relay"]
 
 [workspace.package]
 version = "0.0.0"
@@ -22,6 +22,11 @@ subtle = "2.6.1"
 tempfile = "3.21.0"
 time = { version = "0.3.41", features = ["formatting", "parsing"] }
 utoipa = { version = "5.4.0", features = ["time"] }
+axum = "0.8.4"
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time", "io-util"] }
+tower = { version = "0.5.2", features = ["util", "limit"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

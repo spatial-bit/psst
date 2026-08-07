@@ -25,14 +25,16 @@ Last reconciled: 2026-08-07
 - W-107 Slice 1 reliability gate independently approved: 80 tests, repeated stress, real held-lock contention, mid-ack rollback, and abrupt-process commit-boundary evidence.
 - W-107 revision `4c8e094` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31220050245>.
 - Slice 1 merged to `main` at `fe4f0bf`; the merged revision passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31220421510>.
+- W-201 protocol/OpenAPI contract independently reviewed and verified; GitHub Actions passed on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31223796106>.
+- W-202 authenticated store boundary and relay runtime independently approved locally with 126 passing tests; cross-platform CI is pending the implementation commit.
 
 ## Active
 
-- W-202 authenticated store boundary, relay runtime, and health is ready after W-201 commit and CI evidence.
+- Publish W-202 and capture its cross-platform CI evidence.
 
 ## Ready
 
-- W-203 through W-208 are dependency-ordered and ready after their predecessor gates.
+- W-203 lifecycle HTTP API is ready after W-202 cross-platform CI.
 
 ## Gate evidence
 
@@ -43,4 +45,4 @@ Last reconciled: 2026-08-07
 
 ## Next coordinator action
 
-Commit W-201, capture cross-platform CI evidence, then implement W-202 without widening into product handlers.
+Commit W-202, capture cross-platform CI evidence, then implement W-203 lifecycle HTTP routes.

@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use psst_core::{
     MembershipId, MessageBody, MessageId, MessagePriority, MessageSemantics, UnixMillis,
 };
-use rusqlite::{TransactionBehavior, params};
+use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 
 use crate::{MessageRecord, RepositoryError, Store};
@@ -38,52 +38,14 @@ impl Store {
     /// Returns [`RepositoryError::InvalidRequest`] unless `limit` is in `1..=100`,
     /// or a stable storage error if stored message data cannot be decoded.
     pub fn pending_inbox(&self, query: &InboxQuery) -> Result<Vec<MessageRecord>, RepositoryError> {
-        if !(1..=MAX_INBOX_MESSAGES).contains(&query.limit) {
-            return Err(RepositoryError::InvalidRequest);
-        }
-
-        let mut statement = self.connection.prepare(
-            "SELECT sequence, id, squad_id, sender_membership_id,
-                    recipient_membership_id, body, body_hash, priority, reply_to,
-                    correlation_id, dedupe_key, created_at
-             FROM messages
-             WHERE recipient_membership_id = ?1 AND acknowledged_at IS NULL
-             ORDER BY sequence ASC
-             LIMIT ?2",
-        )?;
-        let rows =
-            statement.query_map(params![query.recipient.as_str(), query.limit], map_message)?;
-        let mut messages = Vec::new();
-        let mut estimated_bytes = 2_usize; // JSON array brackets.
-        for row in rows {
-            let message = row.map_err(map_decode_error)?;
-            let item_bytes = conservative_serialized_size(&message);
-            let separator = usize::from(!messages.is_empty());
-            if estimated_bytes
-                .checked_add(separator)
-                .and_then(|size| size.checked_add(item_bytes))
-                .is_none_or(|size| size > MAX_INBOX_OUTPUT_BYTES)
-            {
-                break;
-            }
-            estimated_bytes += separator + item_bytes;
-            messages.push(message);
-        }
-        Ok(messages)
+        pending_inbox_on(&self.connection, query)
     }
 
     /// Atomically acknowledges messages owned by one recipient.
     ///
-    /// The policy is fail-closed: if any distinct ID is unknown or addressed to
-    /// another membership, the entire batch returns `not_found` without updates.
-    /// Duplicate IDs and already-acknowledged messages are idempotent.
-    ///
     /// # Errors
     ///
-    /// Returns [`RepositoryError::InvalidRequest`] unless the batch contains
-    /// between 1 and 100 IDs,
-    /// [`RepositoryError::NotFound`] for an unknown or foreign ID, or a stable
-    /// storage error. No partial acknowledgement is committed on error.
+    /// Returns a stable validation, ownership, busy, or storage error.
     pub fn acknowledge_messages(
         &mut self,
         request: &AcknowledgeMessages,
@@ -102,44 +64,89 @@ impl Store {
         let transaction = self
             .connection_mut()
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut distinct = HashSet::with_capacity(request.message_ids.len());
-        for id in &request.message_ids {
-            if !distinct.insert(id.clone()) {
-                continue;
-            }
-            let owned: bool = transaction.query_row(
-                "SELECT EXISTS(
-                    SELECT 1 FROM messages
-                    WHERE id = ?1 AND recipient_membership_id = ?2
-                )",
-                params![id.as_str(), request.recipient.as_str()],
-                |row| row.get(0),
-            )?;
-            if !owned {
-                return Err(RepositoryError::NotFound);
-            }
-        }
-        for (index, id) in distinct.into_iter().enumerate() {
-            transaction.execute(
-                "UPDATE messages SET acknowledged_at = ?3
-                 WHERE id = ?1 AND recipient_membership_id = ?2
-                   AND acknowledged_at IS NULL",
-                params![
-                    id.as_str(),
-                    request.recipient.as_str(),
-                    request.acknowledged_at.as_i64()
-                ],
-            )?;
-            if fail_after_first_update && index == 0 {
-                return Err(RepositoryError::InjectedFailure);
-            }
-        }
+        acknowledge_on(&transaction, request, fail_after_first_update)?;
         transaction.commit()?;
         Ok(())
     }
 }
 
-fn map_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<MessageRecord> {
+pub(crate) fn pending_inbox_on(
+    connection: &Connection,
+    query: &InboxQuery,
+) -> Result<Vec<MessageRecord>, RepositoryError> {
+    if !(1..=MAX_INBOX_MESSAGES).contains(&query.limit) {
+        return Err(RepositoryError::InvalidRequest);
+    }
+    let mut statement = connection.prepare(
+        "SELECT sequence, id, squad_id, sender_membership_id,
+                    recipient_membership_id, body, body_hash, priority, reply_to,
+                    correlation_id, dedupe_key, created_at
+             FROM messages
+             WHERE recipient_membership_id = ?1 AND acknowledged_at IS NULL
+             ORDER BY sequence ASC
+             LIMIT ?2",
+    )?;
+    let rows = statement.query_map(params![query.recipient.as_str(), query.limit], map_message)?;
+    let mut messages = Vec::new();
+    let mut estimated_bytes = 2_usize; // JSON array brackets.
+    for row in rows {
+        let message = row.map_err(map_decode_error)?;
+        let item_bytes = conservative_serialized_size(&message);
+        let separator = usize::from(!messages.is_empty());
+        if estimated_bytes
+            .checked_add(separator)
+            .and_then(|size| size.checked_add(item_bytes))
+            .is_none_or(|size| size > MAX_INBOX_OUTPUT_BYTES)
+        {
+            break;
+        }
+        estimated_bytes += separator + item_bytes;
+        messages.push(message);
+    }
+    Ok(messages)
+}
+
+pub(crate) fn acknowledge_on(
+    transaction: &Transaction<'_>,
+    request: &AcknowledgeMessages,
+    fail_after_first_update: bool,
+) -> Result<(), RepositoryError> {
+    let mut distinct = HashSet::with_capacity(request.message_ids.len());
+    for id in &request.message_ids {
+        if !distinct.insert(id.clone()) {
+            continue;
+        }
+        let owned: bool = transaction.query_row(
+            "SELECT EXISTS(
+                    SELECT 1 FROM messages
+                    WHERE id = ?1 AND recipient_membership_id = ?2
+                )",
+            params![id.as_str(), request.recipient.as_str()],
+            |row| row.get(0),
+        )?;
+        if !owned {
+            return Err(RepositoryError::NotFound);
+        }
+    }
+    for (index, id) in distinct.into_iter().enumerate() {
+        transaction.execute(
+            "UPDATE messages SET acknowledged_at = ?3
+                 WHERE id = ?1 AND recipient_membership_id = ?2
+                   AND acknowledged_at IS NULL",
+            params![
+                id.as_str(),
+                request.recipient.as_str(),
+                request.acknowledged_at.as_i64()
+            ],
+        )?;
+        if fail_after_first_update && index == 0 {
+            return Err(RepositoryError::InjectedFailure);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn map_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<MessageRecord> {
     let body = row.get::<_, String>(5)?;
     let stored_hash = row.get::<_, Vec<u8>>(6)?;
     if stored_hash.as_slice() != Sha256::digest(body.as_bytes()).as_slice() {
