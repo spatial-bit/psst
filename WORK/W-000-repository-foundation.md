@@ -1,6 +1,6 @@
 # W-000: Repository foundation
 
-Status: active
+Status: verified
 
 ## Objective
 
@@ -16,3 +16,8 @@ Establish a public MIT-licensed Rust workspace with durable engineering controls
 - No local database, secret, or build output is tracked.
 - The initial public repository is `spatial-bit/psst` unless the owner decision changes.
 
+## Evidence
+
+- Initial foundation commit: `582d9d5`
+- Portable line-ending fix: `8df2397`
+- Cross-platform CI: <https://github.com/spatial-bit/psst/actions/runs/31209799830>

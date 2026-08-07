@@ -1,6 +1,6 @@
 # Progress
 
-Current slice: 0 — Repository and quality foundation  
+Current slice: 1 — Core model and SQLite durability  
 Current gate: not yet satisfied  
 Last reconciled: 2026-08-07
 
@@ -8,23 +8,20 @@ Last reconciled: 2026-08-07
 
 - Product and engineering PRD drafted.
 - Autonomous build-loop controls drafted.
+- W-000 repository foundation published at `spatial-bit/psst`.
+- Cross-platform formatting, linting, and tests passed on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31209799830>.
 
-## Active
+## Ready
 
-- Establish the local repository, initial CI, documentation, and GitHub remote.
-
-## Blocked
-
-- GitHub owner mismatch: the connected app is `spatial-bit`; the active GitHub CLI account is `ebo-bits`.
+- Decompose Slice 1 into bounded core-model and SQLite durability work units.
 
 ## Gate evidence
 
-- Windows local formatting: pending
-- Windows local lint: pending
-- Windows local tests: pending
-- GitHub Actions matrix: pending
+- Windows local formatting: passed
+- Windows local lint: passed
+- Windows local tests: passed
+- GitHub Actions matrix: passed on Windows, Linux, and macOS
 
 ## Next coordinator action
 
-Verify the local foundation, authenticate GitHub CLI as the approved owner, create the remote, and publish `main`.
-
+Create Slice 1 work units, assign independent implementation and review roles, and begin with core domain invariants before persistence.
