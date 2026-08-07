@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["crates/psst-core"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+repository = "https://github.com/spatial-bit/psst"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
