@@ -32,6 +32,21 @@ Status: active
 
 Versioned HTTP API, long polling, structured errors, shutdown, health, and typed Rust client.
 
+Execution order:
+
+```text
+W-201 Wire contract and OpenAPI baseline
+  -> W-202 Relay runtime, configuration, health, and store isolation
+      -> W-203 Squad, membership, lease, and roster HTTP API
+          -> W-204 Durable messaging and transcript HTTP API
+              -> W-205 Bounded long polling and post-commit notification
+                  -> W-206 Typed Rust client and retry boundaries
+                      -> W-207 Relay/client reliability and shutdown gate
+                          -> W-208 Cross-platform development artifacts
+```
+
+Gate: a real relay and typed client pass restart, offline delivery, replay, concurrent watcher, timeout, cancellation, and shutdown tests on Windows, Linux, and macOS. Native CI development artifacts are retained for Slice 3 dogfooding; signed tags, checksums, SBOMs, reproducible release archives, and GitHub Release publication remain Slice 5 scope.
+
 ## Slice 3 — CLI and cooperative MCP
 
 Human CLI, safe token storage, MCP tools, and cooperative Claude/Codex workflows.

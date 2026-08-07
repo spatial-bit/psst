@@ -1,7 +1,7 @@
 # Progress
 
 Current slice: 2 — Relay and typed client
-Current gate: Slice 1 satisfied; merge pending
+Current gate: Slice 1 satisfied on merged `main`; Slice 2 decomposed for execution
 Last reconciled: 2026-08-07
 
 ## Verified
@@ -24,14 +24,15 @@ Last reconciled: 2026-08-07
 - W-106 cross-platform PR evidence passed on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31219378486>.
 - W-107 Slice 1 reliability gate independently approved: 80 tests, repeated stress, real held-lock contention, mid-ack rollback, and abrupt-process commit-boundary evidence.
 - W-107 revision `4c8e094` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31220050245>.
+- Slice 1 merged to `main` at `fe4f0bf`; the merged revision passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31220421510>.
 
 ## Active
 
-- Merge reviewed Slice 1 draft PR #1 to `main`.
+- W-201 wire contract and OpenAPI baseline is ready to implement.
 
 ## Ready
 
-- Decompose Slice 2 relay and typed-client work units from the approved PRD.
+- W-202 through W-208 are dependency-ordered and ready after their predecessor gates.
 
 ## Gate evidence
 
@@ -42,4 +43,4 @@ Last reconciled: 2026-08-07
 
 ## Next coordinator action
 
-Merge Slice 1, confirm `main` green, then begin Slice 2 relay and typed-client work units.
+Implement and independently review W-201, then advance sequentially through the Slice 2 relay/client units without widening into MCP or harness activation.

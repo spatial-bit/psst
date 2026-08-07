@@ -78,7 +78,7 @@ Core use cases:
 - **FR-004:** A client can join an active squad with a unique active membership name, role, mode, and client metadata.
 - **FR-005:** Joining returns opaque agent, membership, instance, and resume identifiers plus lease timing.
 - **FR-006:** A live membership name cannot be claimed by a second instance.
-- **FR-007:** An expired instance can be resumed only using its opaque resume token; lease expiry does not release or transfer the durable membership name.
+- **FR-007:** An expired instance can be resumed only using its opaque resume token; lease expiry does not release or transfer the durable membership name. Resume is exposed as `POST /v1/squads/{squad}/resume`; join and resume hand one-time adapter credentials through `Psst-Session-Credential`, never an ordinary JSON body.
 - **FR-008:** A member can leave; leaving closes the active instance but retains history.
 - **FR-009:** A client can read squad mission, lifecycle state, roster, transport presence, availability, mode, and last-seen time.
 - **FR-010:** Archiving a squad rejects new joins and messages but preserves reads and history.
@@ -307,6 +307,7 @@ POST /v1/squads
 GET  /v1/squads/{squad}
 POST /v1/squads/{squad}/archive
 POST /v1/squads/{squad}/join
+POST /v1/squads/{squad}/resume
 POST /v1/squads/{squad}/leave
 GET  /v1/squads/{squad}/roster
 POST /v1/heartbeat
@@ -315,6 +316,8 @@ GET  /v1/inbox?limit={n}&wait={seconds}
 POST /v1/messages/ack
 GET  /v1/squads/{squad}/transcript?after={sequence}&limit={n}
 ```
+
+Join is the unauthenticated bootstrap and atomically creates the membership and initial instance. Protected operations use `Authorization: Bearer <instance-id>.<resume-token>` and derive acting identity from that session. Join and resume return the adapter-only replacement credential in `Psst-Session-Credential`; secret material is never placed in ordinary JSON response bodies.
 
 Long-poll requirements:
 
