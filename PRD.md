@@ -78,7 +78,7 @@ Core use cases:
 - **FR-004:** A client can join an active squad with a unique active membership name, role, mode, and client metadata.
 - **FR-005:** Joining returns opaque agent, membership, instance, and resume identifiers plus lease timing.
 - **FR-006:** A live membership name cannot be claimed by a second instance.
-- **FR-007:** An expired instance can be resumed using its opaque resume token.
+- **FR-007:** An expired instance can be resumed only using its opaque resume token; lease expiry does not release or transfer the durable membership name.
 - **FR-008:** A member can leave; leaving closes the active instance but retains history.
 - **FR-009:** A client can read squad mission, lifecycle state, roster, transport presence, availability, mode, and last-seen time.
 - **FR-010:** Archiving a squad rejects new joins and messages but preserves reads and history.
@@ -98,13 +98,13 @@ Core use cases:
 - **FR-032:** Sending to an unknown, left, or cross-squad recipient fails with a structured error.
 - **FR-033:** An accepted message receives a stable opaque ID and monotonic sequence.
 - **FR-034:** A sender-supplied dedupe key makes retries idempotent within the sender membership and squad.
-- **FR-035:** Reuse of a dedupe key with different message semantics fails with `idempotency_conflict`.
-- **FR-036:** Inbox reads support `after`, `limit`, and bounded `wait` parameters.
+- **FR-035:** Within the `(squad, sender membership)` dedupe scope, reuse of a dedupe key with a different recipient, body, priority, reply target, or correlation ID fails with `idempotency_conflict`. An exact committed retry returns its original result before current lifecycle checks; a different squad or sender selects a different scope.
+- **FR-036:** Inbox reads are acknowledgement-driven and support `limit` and bounded `wait` parameters; transcript/history reads use sequence cursors.
 - **FR-037:** Retrieval does not acknowledge a message.
 - **FR-038:** A recipient can acknowledge messages individually in batches.
 - **FR-039:** Unacknowledged messages are replayable after process, adapter, network, or relay restart.
 - **FR-040:** Replies may reference one prior message; conversations may share a correlation ID.
-- **FR-041:** Version one priorities are `normal` and `high`; priority affects ordering and wake metadata but never cancels work.
+- **FR-041:** Version one priorities are `normal` and `high`; priority affects wake metadata but not inbox pagination order and never cancels work.
 - **FR-042:** Message bodies are limited to 64 KiB UTF-8; configurable lower limits are permitted.
 - **FR-043:** Inbox batches are limited to 100 messages and 1 MiB serialized output.
 
@@ -227,6 +227,7 @@ memberships(
   squad_id TEXT NOT NULL REFERENCES squads(id),
   agent_id TEXT NOT NULL REFERENCES agents(id),
   name TEXT NOT NULL,
+  normalized_name TEXT NOT NULL,
   role TEXT NOT NULL,
   joined_at INTEGER NOT NULL,
   left_at INTEGER
@@ -273,7 +274,8 @@ schema_migrations(
 
 Required indexes and constraints:
 
-- partial unique active membership name per squad;
+- partial unique active normalized membership name per squad;
+- composite uniqueness on membership `(id, squad_id)` and message `(id, squad_id)` so foreign keys structurally prevent cross-squad sender, recipient, and reply references;
 - one unclosed, unexpired owner enforced transactionally per membership;
 - unique `(squad_id, sender_membership_id, dedupe_key)` when dedupe key is non-null;
 - inbox index on `(recipient_membership_id, acknowledged_at, priority, sequence)`;
@@ -309,7 +311,7 @@ POST /v1/squads/{squad}/leave
 GET  /v1/squads/{squad}/roster
 POST /v1/heartbeat
 POST /v1/messages
-GET  /v1/inbox?after={sequence}&limit={n}&wait={seconds}
+GET  /v1/inbox?limit={n}&wait={seconds}
 POST /v1/messages/ack
 GET  /v1/squads/{squad}/transcript?after={sequence}&limit={n}
 ```
@@ -322,6 +324,7 @@ Long-poll requirements:
 - cancellation releases all resources;
 - commits notify relevant local waiters after the transaction completes;
 - correctness never depends on an in-memory notification.
+- pending inbox selection is always `acknowledged_at IS NULL` in ascending sequence order; retrieval cursors must never hide an unacknowledged message.
 
 Error envelope:
 
