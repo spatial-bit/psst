@@ -201,6 +201,12 @@ impl std::error::Error for WorkerError {}
 enum StoreCommand {
     #[cfg(test)]
     Block(Duration, oneshot::Sender<Result<(), WorkerError>>),
+    #[cfg(test)]
+    ControlledBlock {
+        started: oneshot::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+        reply: oneshot::Sender<Result<(), WorkerError>>,
+    },
     Join(
         WorkerJoin,
         oneshot::Sender<Result<JoinAndClaimOutcome, RepositoryError>>,
@@ -251,6 +257,10 @@ impl StoreCommand {
         match self {
             #[cfg(test)]
             Self::Block(_, reply) => {
+                let _ = reply.send(Err(WorkerError::Unavailable));
+            }
+            #[cfg(test)]
+            Self::ControlledBlock { reply, .. } => {
                 let _ = reply.send(Err(WorkerError::Unavailable));
             }
             Self::Ready(reply) | Self::Checkpoint(reply) => {
@@ -396,6 +406,16 @@ impl StoreWorker {
                             std::thread::sleep(duration);
                             let _ = reply.send(Ok(()));
                         }
+                        #[cfg(test)]
+                        StoreCommand::ControlledBlock {
+                            started,
+                            release,
+                            reply,
+                        } => {
+                            let _ = started.send(());
+                            let result = release.recv().map_err(|_| WorkerError::Unavailable);
+                            let _ = reply.send(result);
+                        }
                         StoreCommand::Join(request, reply) => {
                             let now = clock.now();
                             let mut membership = request.membership;
@@ -520,6 +540,20 @@ impl StoreWorker {
     async fn block_for(&self, duration: Duration) -> Result<(), WorkerError> {
         self.request(|reply| StoreCommand::Block(duration, reply))
             .await
+    }
+
+    #[cfg(test)]
+    async fn controlled_block(
+        &self,
+        started: oneshot::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    ) -> Result<(), WorkerError> {
+        self.request(|reply| StoreCommand::ControlledBlock {
+            started,
+            release,
+            reply,
+        })
+        .await
     }
 
     pub async fn join(&self, request: WorkerJoin) -> Result<JoinAndClaimOutcome, DispatchError> {
@@ -1031,17 +1065,30 @@ mod tests {
             Arc::new(SystemTimeSource),
         )
         .unwrap();
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
         let blocker = worker.clone();
-        let task = tokio::spawn(async move { blocker.block_for(Duration::from_millis(100)).await });
-        tokio::time::sleep(Duration::from_millis(5)).await;
-        let queued_worker = worker.clone();
-        let queued = tokio::spawn(async move { queued_worker.checkpoint().await });
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        let block_task =
+            tokio::spawn(async move { blocker.controlled_block(started_tx, release_rx).await });
+        started_rx.await.unwrap();
+
+        let (checkpoint_reply_tx, mut checkpoint_reply_rx) = oneshot::channel();
+        assert!(
+            worker
+                .try_send(StoreCommand::Checkpoint(checkpoint_reply_tx))
+                .is_ok()
+        );
         assert_eq!(worker.ready().await, Err(WorkerError::RateLimited));
-        assert_eq!(task.await.unwrap(), Err(WorkerError::Timeout));
-        assert_eq!(queued.await.unwrap(), Err(WorkerError::Timeout));
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(worker.ready().await.is_ok());
+        assert_eq!(block_task.await.unwrap(), Err(WorkerError::Timeout));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut checkpoint_reply_rx)
+                .await
+                .is_err()
+        );
+
+        release_tx.send(()).unwrap();
+        assert_eq!(checkpoint_reply_rx.await.unwrap(), Ok(()));
+        assert_eq!(worker.ready().await, Ok(()));
         worker.begin_shutdown();
         handle.join().unwrap().unwrap();
     }
