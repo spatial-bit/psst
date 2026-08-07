@@ -28,11 +28,11 @@ Last reconciled: 2026-08-07
 
 ## Active
 
-- W-201 wire contract and OpenAPI baseline is ready to implement.
+- W-202 authenticated store boundary, relay runtime, and health is ready after W-201 commit and CI evidence.
 
 ## Ready
 
-- W-202 through W-208 are dependency-ordered and ready after their predecessor gates.
+- W-203 through W-208 are dependency-ordered and ready after their predecessor gates.
 
 ## Gate evidence
 
@@ -43,4 +43,4 @@ Last reconciled: 2026-08-07
 
 ## Next coordinator action
 
-Implement and independently review W-201, then advance sequentially through the Slice 2 relay/client units without widening into MCP or harness activation.
+Commit W-201, capture cross-platform CI evidence, then implement W-202 without widening into product handlers.

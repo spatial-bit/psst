@@ -1,6 +1,6 @@
 # W-201: Wire contract and OpenAPI baseline
 
-Status: ready
+Status: verified
 
 ## Objective
 
@@ -57,4 +57,8 @@ Do not implement sockets, handlers, database access, token persistence, CLI, MCP
 
 ## Verification evidence
 
-Pending.
+- Independently reviewed and approved 2026-08-07 after field-level OpenAPI, encoded-size, sequence-range, roster optionality, mandatory dedupe, credential-header, and exhaustive contract-test findings were resolved.
+- The checked-in OpenAPI 3.1 artifact is generated from shared Rust DTO schemas, covers all 15 operations, path/query parameters, request/success/error responses, stable bounds, sensitive credential/no-store headers, and truthful UTF-8 byte-limit extensions.
+- `cargo fmt --check` passed on Windows.
+- `cargo clippy --workspace --all-targets -- -D warnings` passed on Windows.
+- `cargo test --workspace` passed on Windows: 17 core tests, 18 protocol tests, 63 store tests, and all doc tests.

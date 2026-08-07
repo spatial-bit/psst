@@ -1,0 +1,1628 @@
+components:
+  schemas:
+    AckMessagesRequest:
+      additionalProperties: false
+      properties:
+        message_ids:
+          items:
+            maxLength: 128
+            minLength: 5
+            pattern: ^msg_[a-z0-9-]+$
+            type: string
+          maxItems: 100
+          minItems: 1
+          type: array
+      required:
+      - message_ids
+      type: object
+    AckMessagesResponse:
+      properties:
+        acknowledged_at:
+          $ref: '#/components/schemas/ApiTimestamp'
+        acknowledged_ids:
+          items:
+            maxLength: 128
+            minLength: 5
+            pattern: ^msg_[a-z0-9-]+$
+            type: string
+          type: array
+      required:
+      - acknowledged_ids
+      - acknowledged_at
+      type: object
+    AgentModeDto:
+      enum:
+      - cooperative
+      - scheduled
+      - harnessed
+      type: string
+    ApiErrorCode:
+      enum:
+      - invalid_request
+      - not_found
+      - squad_archived
+      - not_member
+      - name_in_use
+      - lease_expired
+      - recipient_not_found
+      - idempotency_conflict
+      - payload_too_large
+      - rate_limited
+      - database_busy
+      - internal_error
+      type: string
+    ApiTimestamp:
+      description: UTC RFC 3339 timestamp with exactly millisecond precision on the wire.
+      format: date-time
+      pattern: ^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$
+      type: string
+    ArchiveSquadRequest:
+      additionalProperties: false
+      type: object
+    ArchiveSquadResponse:
+      properties:
+        squad:
+          $ref: '#/components/schemas/SquadSummary'
+      required:
+      - squad
+      type: object
+    AvailabilityDto:
+      enum:
+      - idle
+      - busy
+      - blocked
+      - unknown
+      type: string
+    AvailabilitySourceDto:
+      enum:
+      - session_lifecycle
+      - mcp_connection
+      - tool_activity
+      - agent_reported
+      - unknown
+      type: string
+    ClientMetadata:
+      additionalProperties: false
+      properties:
+        hostname:
+          maxLength: 255
+          minLength: 1
+          type:
+          - string
+          - 'null'
+          x-maxUtf8Bytes: 255
+        kind:
+          maxLength: 64
+          minLength: 1
+          type: string
+          x-maxUtf8Bytes: 64
+        version:
+          maxLength: 64
+          minLength: 1
+          type:
+          - string
+          - 'null'
+          x-maxUtf8Bytes: 64
+      required:
+      - kind
+      type: object
+    CreateSquadRequest:
+      additionalProperties: false
+      properties:
+        mission:
+          type: string
+          x-maxUtf8Bytes: 4096
+        name:
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$
+          type: string
+      required:
+      - name
+      - mission
+      type: object
+    ErrorBody:
+      properties:
+        code:
+          $ref: '#/components/schemas/ApiErrorCode'
+        details:
+          additionalProperties:
+            maxLength: 256
+            type: string
+          maxProperties: 16
+          propertyNames:
+            maxLength: 64
+          type: object
+        message:
+          maxLength: 512
+          minLength: 1
+          type: string
+        retryable:
+          type: boolean
+      required:
+      - code
+      - message
+      - retryable
+      type: object
+    ErrorEnvelope:
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+      required:
+      - error
+      type: object
+    HealthResponse:
+      properties:
+        status:
+          type: string
+      required:
+      - status
+      type: object
+    HeartbeatRequest:
+      additionalProperties: false
+      properties:
+        availability:
+          $ref: '#/components/schemas/AvailabilityDto'
+        availability_observed_at:
+          $ref: '#/components/schemas/ApiTimestamp'
+        availability_source:
+          $ref: '#/components/schemas/AvailabilitySourceDto'
+      required:
+      - availability
+      - availability_source
+      - availability_observed_at
+      type: object
+    HeartbeatResponse:
+      properties:
+        heartbeat_interval_seconds:
+          format: int32
+          minimum: 0
+          type: integer
+        lease_expires_at:
+          $ref: '#/components/schemas/ApiTimestamp'
+      required:
+      - lease_expires_at
+      - heartbeat_interval_seconds
+      type: object
+    InboxResponse:
+      properties:
+        messages:
+          items:
+            $ref: '#/components/schemas/MessageDto'
+          maxItems: 100
+          type: array
+        pending_count:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+      - messages
+      - pending_count
+      type: object
+    JoinSquadRequest:
+      additionalProperties: false
+      properties:
+        client:
+          $ref: '#/components/schemas/ClientMetadata'
+        mission:
+          type:
+          - string
+          - 'null'
+          x-maxUtf8Bytes: 4096
+        mode:
+          $ref: '#/components/schemas/AgentModeDto'
+        name:
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9](?:[a-z0-9_.-]*[a-z0-9])?$
+          type: string
+        role:
+          type: string
+          x-maxUtf8Bytes: 256
+      required:
+      - name
+      - role
+      - mode
+      - client
+      type: object
+    LeaveSquadRequest:
+      additionalProperties: false
+      type: object
+    LeaveSquadResponse:
+      properties:
+        left_at:
+          $ref: '#/components/schemas/ApiTimestamp'
+        membership_id:
+          maxLength: 128
+          minLength: 5
+          pattern: ^(sqd|agt|mem|ins|msg)_[a-z0-9-]+$
+          type: string
+      required:
+      - membership_id
+      - left_at
+      type: object
+    MembershipStateDto:
+      enum:
+      - joined
+      - left
+      type: string
+    MessageDto:
+      properties:
+        acknowledged_at:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/ApiTimestamp'
+        body:
+          description: Non-empty UTF-8; limited by encoded byte length, not Unicode scalar count.
+          minLength: 1
+          type: string
+          x-maxUtf8Bytes: 65536
+        correlation_id:
+          type:
+          - string
+          - 'null'
+          x-maxUtf8Bytes: 256
+        created_at:
+          $ref: '#/components/schemas/ApiTimestamp'
+        id:
+          maxLength: 128
+          minLength: 5
+          pattern: ^(sqd|agt|mem|ins|msg)_[a-z0-9-]+$
+          type: string
+        priority:
+          $ref: '#/components/schemas/MessagePriorityDto'
+        recipient:
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9](?:[a-z0-9_.-]*[a-z0-9])?$
+          type: string
+        reply_to:
+          maxLength: 128
+          type:
+          - string
+          - 'null'
+        sender:
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9](?:[a-z0-9_.-]*[a-z0-9])?$
+          type: string
+        sequence:
+          $ref: '#/components/schemas/MessageSequence'
+        squad:
+          type: string
+      required:
+      - sequence
+      - id
+      - squad
+      - sender
+      - recipient
+      - body
+      - priority
+      - created_at
+      type: object
+    MessagePriorityDto:
+      enum:
+      - normal
+      - high
+      type: string
+    MessageSequence:
+      description: SQLite-compatible, nonnegative message sequence.
+      format: int64
+      maximum: 9223372036854775807
+      minimum: 0
+      type: integer
+    ReadyResponse:
+      properties:
+        schema_version:
+          format: int32
+          minimum: 0
+          type: integer
+        status:
+          type: string
+      required:
+      - status
+      - schema_version
+      type: object
+    ResumeSquadRequest:
+      additionalProperties: false
+      properties:
+        client:
+          $ref: '#/components/schemas/ClientMetadata'
+        mode:
+          $ref: '#/components/schemas/AgentModeDto'
+      required:
+      - mode
+      - client
+      type: object
+    RosterMember:
+      properties:
+        availability:
+          $ref: '#/components/schemas/AvailabilityDto'
+        availability_observed_at:
+          $ref: '#/components/schemas/ApiTimestamp'
+        availability_source:
+          $ref: '#/components/schemas/AvailabilitySourceDto'
+        last_seen_at:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/ApiTimestamp'
+        membership_id:
+          maxLength: 128
+          minLength: 5
+          pattern: ^(sqd|agt|mem|ins|msg)_[a-z0-9-]+$
+          type: string
+        membership_state:
+          $ref: '#/components/schemas/MembershipStateDto'
+        mode:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/AgentModeDto'
+        name:
+          type: string
+        presence:
+          $ref: '#/components/schemas/TransportPresenceDto'
+        role:
+          type: string
+      required:
+      - membership_id
+      - name
+      - role
+      - membership_state
+      - presence
+      - availability
+      - availability_source
+      - availability_observed_at
+      type: object
+    RosterResponse:
+      properties:
+        members:
+          items:
+            $ref: '#/components/schemas/RosterMember'
+          type: array
+        squad:
+          type: string
+      required:
+      - squad
+      - members
+      type: object
+    SendMessageRequest:
+      additionalProperties: false
+      properties:
+        body:
+          description: Non-empty UTF-8; limited by encoded byte length, not Unicode scalar count.
+          minLength: 1
+          type: string
+          x-maxUtf8Bytes: 65536
+        correlation_id:
+          type:
+          - string
+          - 'null'
+          x-maxUtf8Bytes: 256
+        dedupe_key:
+          minLength: 1
+          type: string
+          x-maxUtf8Bytes: 256
+        priority:
+          $ref: '#/components/schemas/MessagePriorityDto'
+        recipient:
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9](?:[a-z0-9_.-]*[a-z0-9])?$
+          type: string
+        reply_to:
+          maxLength: 128
+          type:
+          - string
+          - 'null'
+      required:
+      - recipient
+      - body
+      - dedupe_key
+      type: object
+    SendMessageResponse:
+      properties:
+        idempotent_replay:
+          type: boolean
+        message:
+          $ref: '#/components/schemas/MessageDto'
+      required:
+      - message
+      - idempotent_replay
+      type: object
+    SessionResponse:
+      properties:
+        agent_id:
+          maxLength: 128
+          minLength: 5
+          pattern: ^(sqd|agt|mem|ins|msg)_[a-z0-9-]+$
+          type: string
+        heartbeat_interval_seconds:
+          format: int32
+          minimum: 0
+          type: integer
+        instance_id:
+          maxLength: 128
+          minLength: 5
+          pattern: ^(sqd|agt|mem|ins|msg)_[a-z0-9-]+$
+          type: string
+        lease_expires_at:
+          $ref: '#/components/schemas/ApiTimestamp'
+        lease_seconds:
+          format: int32
+          minimum: 0
+          type: integer
+        member_name:
+          type: string
+        membership_id:
+          maxLength: 128
+          minLength: 5
+          pattern: ^(sqd|agt|mem|ins|msg)_[a-z0-9-]+$
+          type: string
+        role:
+          type: string
+        squad:
+          $ref: '#/components/schemas/SquadSummary'
+      required:
+      - agent_id
+      - membership_id
+      - instance_id
+      - squad
+      - member_name
+      - role
+      - heartbeat_interval_seconds
+      - lease_seconds
+      - lease_expires_at
+      type: object
+    SquadStateDto:
+      enum:
+      - active
+      - archived
+      type: string
+    SquadSummary:
+      properties:
+        archived_at:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/ApiTimestamp'
+        created_at:
+          $ref: '#/components/schemas/ApiTimestamp'
+        id:
+          maxLength: 128
+          minLength: 5
+          pattern: ^(sqd|agt|mem|ins|msg)_[a-z0-9-]+$
+          type: string
+        mission:
+          type: string
+          x-maxUtf8Bytes: 4096
+        name:
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$
+          type: string
+        state:
+          $ref: '#/components/schemas/SquadStateDto'
+      required:
+      - id
+      - name
+      - mission
+      - state
+      - created_at
+      type: object
+    TranscriptResponse:
+      properties:
+        messages:
+          items:
+            $ref: '#/components/schemas/MessageDto'
+          maxItems: 100
+          type: array
+        next_after:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/MessageSequence'
+      required:
+      - messages
+      type: object
+    TransportPresenceDto:
+      enum:
+      - online
+      - offline
+      type: string
+    Vec:
+      items:
+        properties:
+          archived_at:
+            oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/ApiTimestamp'
+          created_at:
+            $ref: '#/components/schemas/ApiTimestamp'
+          id:
+            type: string
+          mission:
+            type: string
+          name:
+            type: string
+          state:
+            $ref: '#/components/schemas/SquadStateDto'
+        required:
+        - id
+        - name
+        - mission
+        - state
+        - created_at
+        type: object
+      type: array
+  securitySchemes:
+    sessionCredential:
+      scheme: bearer
+      type: http
+info:
+  description: Versioned HTTP wire contract for Psst
+  license:
+    identifier: MIT
+    name: MIT
+  title: Psst API
+  version: v1
+openapi: 3.1.0
+paths:
+  /healthz:
+    get:
+      operationId: health
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not a member
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Rate limited
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Database busy
+      tags: []
+  /readyz:
+    get:
+      operationId: ready
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not a member
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Rate limited
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Database busy
+      tags: []
+  /v1/heartbeat:
+    post:
+      operationId: heartbeat
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HeartbeatRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeartbeatResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not a member
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Rate limited
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Database busy
+      security:
+      - sessionCredential: []
+      tags: []
+  /v1/inbox:
+    get:
+      operationId: inbox
+      parameters:
+      - in: query
+        name: limit
+        required: false
+        schema:
+          format: int32
+          maximum: 100
+          minimum: 1
+          type: integer
+      - in: query
+        name: wait
+        required: false
+        schema:
+          format: int32
+          maximum: 30
+          minimum: 0
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not a member
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Rate limited
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Database busy
+      security:
+      - sessionCredential: []
+      tags: []
+  /v1/messages:
+    post:
+      operationId: send_message
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendMessageResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not a member
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Rate limited
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Database busy
+      security:
+      - sessionCredential: []
+      tags: []
+  /v1/messages/ack:
+    post:
+      operationId: acknowledge
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AckMessagesRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AckMessagesResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not a member
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Rate limited
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Database busy
+      security:
+      - sessionCredential: []
+      tags: []
+  /v1/squads:
+    get:
+      operationId: list_squads
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vec'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not a member
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Rate limited
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Database busy
+      tags: []
+    post:
+      operationId: create_squad
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSquadRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SquadSummary'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not a member
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Rate limited
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Database busy
+      tags: []
+  /v1/squads/{squad}:
+    get:
+      operationId: get_squad
+      parameters:
+      - in: path
+        name: squad
+        required: true
+        schema:
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SquadSummary'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not a member
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Rate limited
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Database busy
+      tags: []
+  /v1/squads/{squad}/archive:
+    post:
+      operationId: archive_squad
+      parameters:
+      - in: path
+        name: squad
+        required: true
+        schema:
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArchiveSquadRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArchiveSquadResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not a member
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Rate limited
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Database busy
+      security:
+      - sessionCredential: []
+      tags: []
+  /v1/squads/{squad}/join:
+    post:
+      operationId: join_squad
+      parameters:
+      - in: path
+        name: squad
+        required: true
+        schema:
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinSquadRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: ''
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store
+                type: string
+            Psst-Session-Credential:
+              schema:
+                maxLength: 172
+                type: string
+                writeOnly: true
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not a member
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Rate limited
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Database busy
+      tags: []
+  /v1/squads/{squad}/leave:
+    post:
+      operationId: leave_squad
+      parameters:
+      - in: path
+        name: squad
+        required: true
+        schema:
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaveSquadRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaveSquadResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not a member
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Rate limited
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Database busy
+      security:
+      - sessionCredential: []
+      tags: []
+  /v1/squads/{squad}/resume:
+    post:
+      operationId: resume_squad
+      parameters:
+      - in: path
+        name: squad
+        required: true
+        schema:
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResumeSquadRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: ''
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store
+                type: string
+            Psst-Session-Credential:
+              schema:
+                maxLength: 172
+                type: string
+                writeOnly: true
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not a member
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Rate limited
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Database busy
+      security:
+      - sessionCredential: []
+      tags: []
+  /v1/squads/{squad}/roster:
+    get:
+      operationId: roster
+      parameters:
+      - in: path
+        name: squad
+        required: true
+        schema:
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RosterResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not a member
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Rate limited
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Database busy
+      tags: []
+  /v1/squads/{squad}/transcript:
+    get:
+      operationId: transcript
+      parameters:
+      - in: path
+        name: squad
+        required: true
+        schema:
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$
+          type: string
+      - in: query
+        name: after
+        required: false
+        schema:
+          $ref: '#/components/schemas/MessageSequence'
+      - in: query
+        name: limit
+        required: false
+        schema:
+          format: int32
+          maximum: 100
+          minimum: 1
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not a member
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflict
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Payload too large
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Rate limited
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Database busy
+      security:
+      - sessionCredential: []
+      tags: []

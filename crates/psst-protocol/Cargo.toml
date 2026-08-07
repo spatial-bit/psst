@@ -1,0 +1,20 @@
+[package]
+name = "psst-protocol"
+description = "Versioned HTTP wire contract for Psst"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+http.workspace = true
+psst-core = { path = "../psst-core" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+time.workspace = true
+utoipa.workspace = true
+
+[lints]
+workspace = true
