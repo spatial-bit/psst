@@ -1,6 +1,6 @@
 # W-202: Authenticated store boundary, relay runtime, and health
 
-Status: verified locally; cross-platform CI pending
+Status: verified
 
 ## Objective
 
@@ -60,3 +60,4 @@ Do not expose product mutation endpoints beyond test-only wiring, implement long
 - `cargo test --workspace` passed on Windows: 17 core, 18 protocol, 18 relay, and 73 store tests; all doc tests passed.
 - Store evidence covers atomic bootstrap rollback at every write boundary, every protected command's credential/expiry behavior, resume ownership, exact retries after expiry/leave/archive, and repeated independent-connection lifecycle races.
 - Runtime evidence covers queue saturation/recovery/cancellation, actual TCP and request admission bounds, body/deadline enforcement, healthy/unavailable/incompatible readiness, WAL writer behavior, checkpoint failure propagation, real HTTP drain/refusal, process-hard deadline exit, and credential/body-safe text and JSON logs.
+- Revision `b99f9c4` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31227930335>.

@@ -1,6 +1,6 @@
 # W-203: Squad, membership, lease, and roster HTTP API
 
-Status: blocked on W-202
+Status: active
 
 ## Objective
 

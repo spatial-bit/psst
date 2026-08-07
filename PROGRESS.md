@@ -26,15 +26,15 @@ Last reconciled: 2026-08-07
 - W-107 revision `4c8e094` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31220050245>.
 - Slice 1 merged to `main` at `fe4f0bf`; the merged revision passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31220421510>.
 - W-201 protocol/OpenAPI contract independently reviewed and verified; GitHub Actions passed on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31223796106>.
-- W-202 authenticated store boundary and relay runtime independently approved locally with 126 passing tests; cross-platform CI is pending the implementation commit.
+- W-202 authenticated store boundary and relay runtime independently approved with 126 passing tests; revision `b99f9c4` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31227930335>.
 
 ## Active
 
-- Publish W-202 and capture its cross-platform CI evidence.
+- W-203 lifecycle HTTP API: expose squad, membership, lease, resume, and roster behavior through the versioned contract.
 
 ## Ready
 
-- W-203 lifecycle HTTP API is ready after W-202 cross-platform CI.
+- W-204 message and transcript HTTP API is ready after W-203.
 
 ## Gate evidence
 
@@ -45,4 +45,4 @@ Last reconciled: 2026-08-07
 
 ## Next coordinator action
 
-Commit W-202, capture cross-platform CI evidence, then implement W-203 lifecycle HTTP routes.
+Implement W-203 lifecycle HTTP routes, independently review them, and capture cross-platform CI evidence.
