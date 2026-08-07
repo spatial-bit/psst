@@ -1,6 +1,6 @@
 # W-105: Durable message submission and idempotency
 
-Status: pending
+Status: verified
 
 ## Objective
 
@@ -25,12 +25,12 @@ Do not implement inbox reads, acknowledgement, long polling, HTTP, or wake notif
 
 ## Acceptance
 
-- Only a non-left sender in an active squad can send to a non-left recipient in the same squad.
+- Every new send requires a non-left sender in an active squad and a non-left recipient in the same squad. An exact retry of an already committed send returns the original result before current lifecycle authorization so ambiguous commits remain resolvable.
 - Offline recipients remain valid; unknown, left, cross-squad, and archived-squad cases return stable errors.
 - Success is returned only after the insert transaction commits.
 - IDs are stable and SQLite assigns a monotonic sequence.
 - A repeated sender/squad dedupe key with identical semantics returns the original message result and creates no row.
-- Reuse with any changed semantic field returns `idempotency_conflict`.
+- Within the durable `(squad, sender membership)` dedupe scope, reuse with a changed recipient, body, priority, reply target, or correlation ID returns `idempotency_conflict`. A different squad or sender is a different dedupe scope.
 - Reply targets must exist and belong to the same squad; message body and size limits are enforced before write.
 - Message rows are immutable through the public store API.
 
@@ -50,3 +50,11 @@ Do not implement inbox reads, acknowledgement, long polling, HTTP, or wake notif
 - Persist-before-wake must be structurally possible: no callback or notification before commit.
 - Avoid leaking SQL constraint names through public errors.
 
+## Verification evidence
+
+- Independent review completed 2026-08-07; approval followed explicit alignment of scoped dedupe semantics and ambiguous-commit retry precedence across the PRD, ADR, work unit, implementation, and tests.
+- Existing-message reconstruction verifies persisted SHA-256 body integrity before semantic retry comparison.
+- `cargo fmt --check` passed on Windows.
+- `cargo clippy --workspace --all-targets -- -D warnings` passed on Windows.
+- `cargo test --workspace` passed on Windows: 17 core tests, 50 store tests, and all doc tests.
+- Evidence includes post-commit timeout recovery, lifecycle change after commit, independent-connection duplicate races, every in-scope semantic conflict, public cross-squad reply rejection, offline delivery, lifecycle errors, Unicode/64-KiB boundaries, restart persistence, and monotonic sequence assignment.

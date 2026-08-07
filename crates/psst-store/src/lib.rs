@@ -7,12 +7,14 @@ use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 
 mod instance;
+mod message;
 mod repository;
 
 pub use instance::{
     ClaimInstance, ClaimOutcome, DEFAULT_HEARTBEAT_INTERVAL, DEFAULT_LEASE_DURATION,
     HeartbeatInstance, InstanceRecord, LeasePolicy, ResumeInstance,
 };
+pub use message::{MessageRecord, SendMessage};
 pub use repository::{
     CreateSquad, JoinMembership, MembershipRecord, RepositoryError, RosterMember, SquadRecord,
     TransportPresence,

@@ -16,7 +16,8 @@ First, automatically releasing an agent name when a 30-second presence lease exp
 - Initial joins create new agent identities. Cross-squad durable agent identity reuse is deferred.
 - Message bodies are non-empty UTF-8 and limited by bytes.
 - Adapters generate a dedupe key for every logical send. Idempotency is guaranteed only when a dedupe key is present.
-- The canonical idempotency comparison includes squad, sender, recipient, exact body bytes, priority, reply target, and correlation ID.
+- Dedupe identity is scoped by durable squad and sender membership. Within that scope, canonical retry comparison includes recipient membership, exact body bytes, priority, reply target, and correlation ID. Changing squad or sender selects a different dedupe scope rather than conflicting with the original key.
+- An exact retry of an already committed message returns the original result before evaluating current squad or membership lifecycle. This resolves an ambiguous commit even if the squad was archived or a participant left afterward; lifecycle authorization still applies to every new send.
 - Pending inbox reads are acknowledgement-driven. They return unacknowledged messages in ascending sequence order and do not filter by a retrieval cursor.
 - Priority affects wake metadata only in version one. Agents may choose processing order after retrieval.
 - `after=sequence` remains valid for immutable transcript/history pagination, not pending inbox retrieval.

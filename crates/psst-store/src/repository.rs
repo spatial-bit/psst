@@ -73,6 +73,9 @@ pub enum RepositoryError {
     NotMember,
     NameInUse,
     LeaseExpired,
+    RecipientNotFound,
+    IdempotencyConflict,
+    PayloadTooLarge,
     DatabaseBusy,
     Internal(rusqlite::Error),
     InvalidStoredData,
@@ -90,6 +93,9 @@ impl RepositoryError {
             Self::NotMember => ErrorCode::NotMember,
             Self::NameInUse => ErrorCode::NameInUse,
             Self::LeaseExpired => ErrorCode::LeaseExpired,
+            Self::RecipientNotFound => ErrorCode::RecipientNotFound,
+            Self::IdempotencyConflict => ErrorCode::IdempotencyConflict,
+            Self::PayloadTooLarge => ErrorCode::PayloadTooLarge,
             Self::DatabaseBusy => ErrorCode::DatabaseBusy,
             Self::Internal(_)
             | Self::InvalidStoredData
@@ -108,6 +114,9 @@ impl std::fmt::Display for RepositoryError {
             Self::NotMember => "the membership is not active",
             Self::NameInUse => "the requested membership name is in use",
             Self::LeaseExpired => "the instance lease has expired",
+            Self::RecipientNotFound => "the recipient membership was not found",
+            Self::IdempotencyConflict => "the dedupe key has different message semantics",
+            Self::PayloadTooLarge => "the message payload is too large",
             Self::DatabaseBusy => "the database is busy",
             Self::Internal(_)
             | Self::InvalidStoredData

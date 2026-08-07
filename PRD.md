@@ -98,7 +98,7 @@ Core use cases:
 - **FR-032:** Sending to an unknown, left, or cross-squad recipient fails with a structured error.
 - **FR-033:** An accepted message receives a stable opaque ID and monotonic sequence.
 - **FR-034:** A sender-supplied dedupe key makes retries idempotent within the sender membership and squad.
-- **FR-035:** Reuse of a dedupe key with different message semantics fails with `idempotency_conflict`.
+- **FR-035:** Within the `(squad, sender membership)` dedupe scope, reuse of a dedupe key with a different recipient, body, priority, reply target, or correlation ID fails with `idempotency_conflict`. An exact committed retry returns its original result before current lifecycle checks; a different squad or sender selects a different scope.
 - **FR-036:** Inbox reads are acknowledgement-driven and support `limit` and bounded `wait` parameters; transcript/history reads use sequence cursors.
 - **FR-037:** Retrieval does not acknowledge a message.
 - **FR-038:** A recipient can acknowledge messages individually in batches.
