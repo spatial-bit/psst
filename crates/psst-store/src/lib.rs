@@ -6,10 +6,14 @@ use std::time::Duration;
 use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 
+mod inbox;
 mod instance;
 mod message;
 mod repository;
 
+pub use inbox::{
+    AcknowledgeMessages, InboxQuery, MAX_ACK_MESSAGES, MAX_INBOX_MESSAGES, MAX_INBOX_OUTPUT_BYTES,
+};
 pub use instance::{
     ClaimInstance, ClaimOutcome, DEFAULT_HEARTBEAT_INTERVAL, DEFAULT_LEASE_DURATION,
     HeartbeatInstance, InstanceRecord, LeasePolicy, ResumeInstance,
@@ -42,6 +46,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 3,
         sql: include_str!("../migrations/003_instance_owner.sql"),
+    },
+    Migration {
+        version: 4,
+        sql: include_str!("../migrations/004_inbox_order.sql"),
     },
 ];
 
@@ -311,7 +319,7 @@ mod tests {
         let directory = TempDir::new().unwrap();
         let store = Store::open(database_path(&directory)).unwrap();
 
-        assert_eq!(store.schema_version().unwrap(), 3);
+        assert_eq!(store.schema_version().unwrap(), 4);
         assert_eq!(pragma_i64(&store.connection, "foreign_keys"), 1);
         assert_eq!(pragma_string(&store.connection, "journal_mode"), "wal");
         assert_eq!(pragma_i64(&store.connection, "synchronous"), 2);
@@ -358,7 +366,7 @@ mod tests {
         drop(connection);
 
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 3);
+        assert_eq!(store.schema_version().unwrap(), 4);
         let index_exists: bool = store
             .connection
             .query_row(
@@ -408,7 +416,7 @@ mod tests {
             Store::open(&path),
             Err(StoreError::FutureSchema {
                 database: 99,
-                supported: 3
+                supported: 4
             })
         ));
     }
@@ -780,6 +788,7 @@ mod tests {
                 "memberships_roster",
                 "messages_dedupe",
                 "messages_inbox",
+                "messages_inbox_order",
             ]
         );
     }
@@ -801,7 +810,7 @@ mod tests {
                 })
                 .collect();
             for opener in openers {
-                assert_eq!(opener.join().unwrap().unwrap(), 3, "round {round}");
+                assert_eq!(opener.join().unwrap().unwrap(), 4, "round {round}");
             }
         }
     }

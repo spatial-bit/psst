@@ -19,14 +19,16 @@ Last reconciled: 2026-08-07
 - W-104 instance leases and resume independently reviewed and locally verified: exclusive ownership, deterministic heartbeat, 256-bit OS-generated credentials, atomic resume, restart, rollback, and non-disclosure.
 - W-104 cross-platform PR evidence passed on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31217748580>.
 - W-105 durable message submission independently reviewed and locally verified: persist-before-success, scoped idempotency, ambiguous-commit recovery, authorization, integrity metadata, concurrency, restart, and stable errors.
+- W-105 cross-platform PR evidence passed on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31218581813>.
+- W-106 inbox and acknowledgement independently reviewed and locally verified: cursorless replay, sequence order, bounded indexed reads, recipient-only atomic acknowledgement, restart, rollback, and corruption handling.
 
 ## Active
 
-- W-106 inbox and acknowledgement — ready for implementation after W-105 commit and CI evidence.
+- W-107 Slice 1 reliability gate — ready after W-106 commit and CI evidence.
 
 ## Ready
 
-- W-107 Slice 1 reliability gate, blocked on W-106 verification.
+- Slice 2 relay and CLI planning is ready, blocked on the Slice 1 merge gate.
 
 ## Gate evidence
 
@@ -37,4 +39,4 @@ Last reconciled: 2026-08-07
 
 ## Next coordinator action
 
-Commit W-105, capture PR CI evidence, then implement W-106 inbox and acknowledgement.
+Commit W-106, capture PR CI evidence, then execute W-107 reliability and merge review.
