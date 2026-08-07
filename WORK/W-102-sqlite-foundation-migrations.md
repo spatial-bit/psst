@@ -1,6 +1,6 @@
 # W-102: SQLite foundation and migrations
 
-Status: pending
+Status: verified
 
 ## Objective
 
@@ -51,3 +51,10 @@ No business operations beyond opening, migrating, inspecting, and closing a stor
 - Avoid globally shared connections and unbounded retry-on-busy loops.
 - Ensure timestamp and boolean representations match the PRD consistently.
 
+## Verification evidence
+
+- Independent review completed 2026-08-07; migration-ledger prefix validation, frozen historical-fixture evidence, and explicit schema-contract tests were added in response.
+- `cargo fmt --check` passed on Windows.
+- `cargo clippy --workspace --all-targets -- -D warnings` passed on Windows.
+- `cargo test --workspace` passed on Windows: 17 core tests, 14 real-file store tests, and all doc tests.
+- Store evidence covers PRAGMAs, STRICT schema, exact named indexes, frozen v1 upgrade, checksum/application/version/ledger corruption, atomic rollback, restart persistence, checks, composite cross-squad foreign keys, scoped dedupe uniqueness, and eight simultaneous openers across four new files.
