@@ -1,6 +1,6 @@
 # W-101: Core domain model
 
-Status: active
+Status: verified
 
 ## Objective
 
@@ -12,7 +12,7 @@ Define the I/O-free domain vocabulary, validated values, state transitions, and 
 - FR-021–FR-024: lease and availability vocabulary.
 - FR-030–FR-042: direct-message, priority, acknowledgement, and idempotency rules.
 - NFR-009–NFR-010: time representation boundaries and stable error codes.
-- Security §8: opaque resume-token value must not implement `Debug`, `Display`, or serialization into model-facing types.
+- Security §8: opaque resume-token value must not implement `Display` or serialization into model-facing types; any `Debug` implementation must be unconditionally redacted.
 
 ## Dependencies
 
@@ -50,3 +50,11 @@ No filesystem, database, network, MCP, Claude, or Codex I/O. Do not design HTTP 
 - Byte limits must not be implemented as character counts.
 - Avoid generic strings and boolean state flags where typed values or enums prevent invalid combinations.
 - Do not put resume tokens in broadly serializable request/response structures.
+
+## Verification evidence
+
+- Independent review completed 2026-08-07; durable membership IDs replaced reusable routing names in canonical retry semantics.
+- Review also closed availability construction, protocol error vocabulary, value-boundary coverage, and resume-token specification findings.
+- `cargo fmt --check` passed on Windows.
+- `cargo clippy --workspace --all-targets -- -D warnings` passed on Windows.
+- `cargo test --workspace` passed on Windows: 17 unit tests and 0 doc-test failures.
