@@ -11,6 +11,7 @@ repository.workspace = true
 psst-core = { path = "../psst-core" }
 rusqlite.workspace = true
 sha2.workspace = true
+subtle.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

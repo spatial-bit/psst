@@ -67,13 +67,16 @@ pub struct RosterMember {
 /// Stable, non-sensitive repository errors suitable for an interface adapter.
 #[derive(Debug)]
 pub enum RepositoryError {
+    InvalidRequest,
     NotFound,
     SquadArchived,
     NotMember,
     NameInUse,
+    LeaseExpired,
     DatabaseBusy,
     Internal(rusqlite::Error),
     InvalidStoredData,
+    EntropyUnavailable,
     InjectedFailure,
 }
 
@@ -81,14 +84,17 @@ impl RepositoryError {
     #[must_use]
     pub const fn code(&self) -> ErrorCode {
         match self {
+            Self::InvalidRequest => ErrorCode::InvalidRequest,
             Self::NotFound => ErrorCode::NotFound,
             Self::SquadArchived => ErrorCode::SquadArchived,
             Self::NotMember => ErrorCode::NotMember,
             Self::NameInUse => ErrorCode::NameInUse,
+            Self::LeaseExpired => ErrorCode::LeaseExpired,
             Self::DatabaseBusy => ErrorCode::DatabaseBusy,
-            Self::Internal(_) | Self::InvalidStoredData | Self::InjectedFailure => {
-                ErrorCode::InternalError
-            }
+            Self::Internal(_)
+            | Self::InvalidStoredData
+            | Self::EntropyUnavailable
+            | Self::InjectedFailure => ErrorCode::InternalError,
         }
     }
 }
@@ -96,14 +102,17 @@ impl RepositoryError {
 impl std::fmt::Display for RepositoryError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
+            Self::InvalidRequest => "the store request is invalid",
             Self::NotFound => "the requested resource was not found",
             Self::SquadArchived => "the squad is archived",
             Self::NotMember => "the membership is not active",
             Self::NameInUse => "the requested membership name is in use",
+            Self::LeaseExpired => "the instance lease has expired",
             Self::DatabaseBusy => "the database is busy",
-            Self::Internal(_) | Self::InvalidStoredData | Self::InjectedFailure => {
-                "the store operation failed"
-            }
+            Self::Internal(_)
+            | Self::InvalidStoredData
+            | Self::EntropyUnavailable
+            | Self::InjectedFailure => "the store operation failed",
         })
     }
 }

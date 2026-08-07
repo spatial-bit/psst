@@ -1,6 +1,6 @@
 # W-104: Instance leases, heartbeat, and resume
 
-Status: pending
+Status: verified
 
 ## Objective
 
@@ -50,3 +50,11 @@ No background heartbeat loop, token file storage, HTTP authorization, or adapter
 - Resume must create a new instance ID, not reactivate a stale row.
 - Model-facing types must have no path to token material.
 
+## Verification evidence
+
+- Independent review completed 2026-08-07; approval followed remediation of token entropy and availability/source write-boundary findings.
+- Initial claim generates a canonical 256-bit token from the OS CSPRNG and exposes it only through a non-debuggable, non-serializable adapter outcome; SQLite stores only a domain-separated SHA-256 hash and verification is constant-time.
+- `cargo fmt --check` passed on Windows.
+- `cargo clippy --workspace --all-targets -- -D warnings` passed on Windows.
+- `cargo test --workspace` passed on Windows: 17 core tests, 37 store tests, and all doc tests.
+- Evidence includes concurrent ownership, exact lease boundaries, clock rollback, invalid/live/closed resume paths, atomic rollback, restart continuity, token inspection, leave interaction, and pre-transaction rejection of invalid availability observations.

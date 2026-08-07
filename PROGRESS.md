@@ -15,14 +15,16 @@ Last reconciled: 2026-08-07
 - W-102 SQLite foundation independently reviewed and locally verified: bundled SQLite, fail-closed embedded migrations, exact schema constraints, rollback/restart durability, and concurrent startup.
 - W-102 cross-platform PR evidence passed on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31215449960>.
 - W-103 squad and membership transactions independently reviewed and locally verified: durable lifecycle, immutable leave authority, roster projection, concurrency, rollback, restart, and stable errors.
+- W-103 cross-platform PR evidence passed on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31216646126>.
+- W-104 instance leases and resume independently reviewed and locally verified: exclusive ownership, deterministic heartbeat, 256-bit OS-generated credentials, atomic resume, restart, rollback, and non-disclosure.
 
 ## Active
 
-- W-104 instance leases and resume — ready for implementation after W-103 commit and CI evidence.
+- W-105 durable message submission — ready for implementation after W-104 commit and CI evidence.
 
 ## Ready
 
-- W-105 durable message submission, blocked on W-104 verification.
+- W-106 inbox and acknowledgement, blocked on W-105 verification.
 
 ## Gate evidence
 
@@ -33,4 +35,4 @@ Last reconciled: 2026-08-07
 
 ## Next coordinator action
 
-Commit W-103, capture PR CI evidence, then implement W-104 instance leases and resume.
+Commit W-104, capture PR CI evidence, then implement W-105 durable message submission.

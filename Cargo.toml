@@ -10,8 +10,11 @@ license = "MIT"
 repository = "https://github.com/spatial-bit/psst"
 
 [workspace.dependencies]
+base64 = "0.22.1"
+getrandom = "0.3.4"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 sha2 = "0.10.9"
+subtle = "2.6.1"
 tempfile = "3.21.0"
 
 [workspace.lints.rust]
