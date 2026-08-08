@@ -458,6 +458,13 @@ fn open_unix_directory_chain(path: &Path) -> io::Result<(File, Vec<File>)> {
     if !path.is_absolute() {
         return Err(invalid_input());
     }
+    // macOS exposes ordinary temporary paths through aliases such as `/var` -> `/private/var`.
+    // Resolve only the ancestors outside the application-owned profile directory, then open and
+    // verify that final trusted directory without following it. The resulting descriptor chain is
+    // still pinned and every component of the resolved path is opened with NOFOLLOW.
+    let trusted_name = path.file_name().ok_or_else(invalid_input)?;
+    let external_parent = path.parent().ok_or_else(invalid_input)?;
+    let resolved_path = fs::canonicalize(external_parent)?.join(trusted_name);
     let mut current = File::from(
         open(
             "/",
@@ -467,7 +474,7 @@ fn open_unix_directory_chain(path: &Path) -> io::Result<(File, Vec<File>)> {
         .map_err(io::Error::from)?,
     );
     let mut ancestors = Vec::new();
-    for component in path.components() {
+    for component in resolved_path.components() {
         match component {
             Component::RootDir => {}
             Component::Normal(name) => {
@@ -806,6 +813,45 @@ mod tests {
         assert_ne!(
             fs::read(&store.path).unwrap(),
             serde_json::to_vec(&new).unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_symlink_alias_is_resolved_before_trusted_directory_is_pinned() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let real = temp.path().join("real");
+        let attacker = temp.path().join("attacker");
+        fs::create_dir_all(real.join("profiles")).unwrap();
+        fs::create_dir_all(attacker.join("profiles")).unwrap();
+        let alias = temp.path().join("alias");
+        symlink(&real, &alias).unwrap();
+
+        let binding = ProfileBinding::new(
+            "default".into(),
+            "http://127.0.0.1:7341".into(),
+            "alpha".into(),
+            "sqd_alpha".into(),
+            "mem_worker".into(),
+        )
+        .unwrap();
+        let metadata = alias.join("profiles/default.json");
+        let store = LeaveJournalStore::open(&metadata).unwrap();
+
+        fs::remove_file(&alias).unwrap();
+        symlink(&attacker, &alias).unwrap();
+        store.store(&intent(&binding)).unwrap();
+
+        assert!(
+            sibling_path(&real.join("profiles/default.json"))
+                .unwrap()
+                .is_file()
+        );
+        assert!(
+            !sibling_path(&attacker.join("profiles/default.json"))
+                .unwrap()
+                .exists()
         );
     }
 
