@@ -38,24 +38,33 @@ Last reconciled: 2026-08-08
 - W-208 revision `c3340fe` passed standard CI and native artifact builds on Windows x86-64, Linux x86-64, and macOS ARM64: <https://github.com/spatial-bit/psst/actions/runs/31238500463> and <https://github.com/spatial-bit/psst/actions/runs/31238500451>.
 - Trusted upload and clean-download rehearsal retained three 14-day dogfood artifacts and passed on all three native platforms: <https://github.com/spatial-bit/psst/actions/runs/31238613310>.
 - Slice 2 merged to `main` at `d8d6d88`; merged standard CI and native development-artifact workflows passed: <https://github.com/spatial-bit/psst/actions/runs/31239047533> and <https://github.com/spatial-bit/psst/actions/runs/31239047525>.
+- W-301 Slice 3 contracts independently approved with 174 passing tests: complete CLI grammar and
+  versioned output, exhaustive safe error and authority mapping, full closed MCP schemas, a pinned
+  Rust 1.89-compatible SDK, and a Psst-owned bounded/redacting stdio transport with structured cleanup.
+- W-301 revision `83fa79a` passed GitHub Actions on Windows, Linux, and macOS plus native Windows
+  x86-64, Linux x86-64, and macOS ARM64 artifact builds: <https://github.com/spatial-bit/psst/actions/runs/31246729089>
+  and <https://github.com/spatial-bit/psst/actions/runs/31246729075>.
 
 ## Active
 
-- W-301 Slice 3 CLI, profile, and MCP contracts.
-- W-301 implementation repair passes the Windows local format, strict lint, and 174-test workspace
-  gate; independent review and cross-platform CI evidence remain pending.
+- W-302 configuration, profiles, and credential store.
+- W-304 CLI shell and relay operations.
+- W-306 MCP transport and schema contract.
 
 ## Ready
 
-- W-302 configuration/profile credential store, W-304 CLI shell, and W-306 MCP transport become ready after W-301.
+- W-303 cooperative session runtime becomes ready after W-302.
+- W-305 human squad and messaging CLI becomes ready after W-302 and W-304.
+- W-307 cooperative MCP tools becomes ready after W-303 and W-306.
 
 ## Gate evidence
 
-- Windows local formatting: passed for W-301 implementation
-- Windows local lint: passed for W-301 implementation
-- Windows local tests: passed for W-301 implementation
-- W-301 GitHub Actions matrix: pending on Windows, Linux, and macOS
+- W-301 Windows local formatting, strict lint, and 174-test workspace suite: passed
+- W-301 independent contract and adversarial reviews: passed
+- W-301 GitHub Actions matrix: passed on Windows, Linux, and macOS
+- W-301 native artifact builds: passed on Windows x86-64, Linux x86-64, and macOS ARM64
 
 ## Next coordinator action
 
-Implement and independently review W-301 contracts, schemas, CLI help/JSON envelopes, MCP SDK compatibility, and Slice 4 exclusion checks.
+Implement W-302, W-304, and W-306 in parallel behind the frozen W-301 contracts, with independent
+review before integration.

@@ -1,6 +1,6 @@
 # W-301: Slice 3 CLI, profile, and MCP contracts
 
-Status: active
+Status: verified
 
 ## Objective
 
@@ -46,4 +46,8 @@ Do not persist credentials, start heartbeat tasks, implement command behavior, c
 - Exact `rmcp = 3.1.2` builds on Rust 1.89. Its direct feature surface remains
   `server`, `transport-io`, and `macros`; macros are retained for the immediately following W-306
   checked-in tool-server implementation and introduce no activation behavior.
-- Cross-platform acceptance remains pending CI evidence and independent review.
+- Two independent adversarial reviews approved the final contract and bounded-transport design.
+- Revision `83fa79a` passed GitHub Actions on Windows, Linux, and macOS, including the native
+  Windows x86-64, Linux x86-64, and macOS ARM64 development-artifact jobs:
+  <https://github.com/spatial-bit/psst/actions/runs/31246729089> and
+  <https://github.com/spatial-bit/psst/actions/runs/31246729075>.
