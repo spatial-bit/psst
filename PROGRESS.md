@@ -1,7 +1,7 @@
 # Progress
 
 Current slice: 3 — CLI and cooperative MCP
-Current gate: Slice 2 verified and merged; Slice 3 decomposed for execution
+Current gate: Slice 3 automated gate verified; live cooperative walkthrough pending
 Last reconciled: 2026-08-08
 
 ## Verified
@@ -44,26 +44,27 @@ Last reconciled: 2026-08-08
 - W-301 revision `83fa79a` passed GitHub Actions on Windows, Linux, and macOS plus native Windows
   x86-64, Linux x86-64, and macOS ARM64 artifact builds: <https://github.com/spatial-bit/psst/actions/runs/31246729089>
   and <https://github.com/spatial-bit/psst/actions/runs/31246729075>.
+- W-302 configuration, native profile locking, and protected credential storage are independently
+  approved. W-303's cooperative runtime is independently approved after aggregate adversarial
+  review. W-304's CLI shell and relay operations, W-305's human squad/messaging CLI, W-306's MCP
+  transport/schema, and W-307's cooperative MCP dispatch are independently approved.
+- The integrated W-302 through W-307 candidate at
+  `a4af73ad800dde8ceff8209768685e0d7cf19809` passed the complete workspace test, strict Clippy, and
+  format gate on Windows, Ubuntu, and macOS in
+  [workflow 31274551562](https://github.com/spatial-bit/psst/actions/runs/31274551562).
 
 ## Active
 
-- W-302 configuration, profiles, and credential store.
-- W-303 cooperative session runtime is independently approved after aggregate adversarial review.
-  Windows coordinator gates are green for the full workspace test suite, strict lint, and format;
-  native Linux, macOS, and Windows CI remain pending.
-- W-304 CLI shell and relay operations.
-- W-306 MCP transport and schema contract.
-- W-306 implementation passes exact-schema/runtime validation, independent stdio transcripts,
-  strict workspace lint, and the 190-test Windows workspace gate; review and cross-platform CI remain pending.
-- W-307 cooperative MCP business dispatch is implemented locally: all 11 MCP tests pass, including
-  a real-relay two-child lifecycle/replay/ack/reconnect/injection/canary transcript and concurrent
-  long-poll-versus-leave cancellation. Independent adversarial review approved the repaired owned
-  mutation/publication, transition-aware shutdown, orphaned-leave startup topology, and guarded
-  operation drain before profile-lock release. Strict full-workspace lint, formatting, and the
-  serialized full-workspace Windows test gate pass; native CI remains pending.
-- W-305 human squad and messaging CLI is independently approved locally after rebasing every
-  protected operation onto W-303 and repairing failed-leave/archive shutdown paths. Native CI and
-  the explicitly authorized ambiguous-commit proxy evidence remain pending.
+- W-309 live cooperative evidence remains pending: one interactive Claude Code session and one
+  interactive Codex session must use distinct profiles at the exact candidate revision and retain a
+  sanitized, independently approved walkthrough.
+- W-501 through W-503 release-contract, portable-asset, and checkoutless-rehearsal automation are
+  implemented as unreleased candidates. A signed authorized tag, native exact-tag candidate run,
+  owner-controlled isolated trusted-LAN rehearsal, and independent reviewer attestation remain
+  pending. W-504 publication remains separately authorization-gated.
+- The optional loopback CLI process-boundary ambiguity proxy remains deliberately unexecuted because
+  forwarding ephemeral test credentials requires explicit user authorization. Approved
+  client/runtime evidence already proves exact prepared-send retry below that process boundary.
 
 ## Ready
 

@@ -1,6 +1,6 @@
 # W-305: Human squad and messaging CLI
 
-Status: independently approved locally; native CI and one authorized proxy test pending
+Status: verified for the accepted CLI contract; optional process-boundary ambiguity test remains authorization-gated
 
 ## Objective
 
@@ -47,4 +47,9 @@ Complete human identity, roster, messaging, inbox, acknowledgement, transcript, 
   ephemeral test credentials. It requires explicit user authorization. Exact retry is currently
   established below the CLI boundary by the approved client/runtime evidence, not by that pending
   process-level proxy test.
-- Native Linux, macOS, and Windows CI evidence is still required before cross-platform acceptance.
+- The integrated candidate revision `a4af73ad800dde8ceff8209768685e0d7cf19809` passed the complete
+  workspace test, strict Clippy, and format gate on Windows, Ubuntu, and macOS in
+  [workflow 31274551562](https://github.com/spatial-bit/psst/actions/runs/31274551562). The separate
+  loopback proxy test is not claimed: it remains behind explicit authorization because it forwards
+  ephemeral test credentials. Approved client/runtime evidence establishes exact prepared-send
+  retry below the CLI process boundary.

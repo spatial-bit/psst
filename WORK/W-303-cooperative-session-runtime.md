@@ -1,6 +1,6 @@
 # W-303: Cooperative session runtime
 
-Status: implemented and independently approved; cross-platform CI pending
+Status: verified
 
 ## Objective
 
@@ -69,4 +69,6 @@ Provide the single adapter-owned lifecycle for profile locking, session validati
 - Successful shutdown releases the profile guard only after reports, owned sends, scheduler, and
   the lifecycle operation gate have drained. A deterministic blocked-leave race denies a second
   owner until terminal cleanup, then proves a new owner's sentinel survives with no stale cleanup.
-- Native Linux, macOS, and Windows CI remains authoritative and pending.
+- The integrated candidate revision `a4af73ad800dde8ceff8209768685e0d7cf19809` passed the complete
+  workspace test, strict Clippy, and format gate on Windows, Ubuntu, and macOS in
+  [workflow 31274551562](https://github.com/spatial-bit/psst/actions/runs/31274551562).

@@ -21,8 +21,11 @@ that Claude Code, Codex, and other MCP clients can start as a local child proces
 This is an **unreleased dogfood candidate**, not a production release. Start with the
 [cooperative dogfood guide](docs/cooperative-dogfood.md), use the exact command surface in
 [CLI reference](docs/cli-reference.md), and see [development artifacts](docs/development-artifacts.md)
-for native archive status. Reviewed requirements are in [PRD.md](PRD.md), and delivery gates are
-tracked in [ROADMAP.md](ROADMAP.md).
+for the verified short-retention dogfood archives. The separately controlled
+[`v0.1.0-alpha.1` release process](docs/release-process.md) is prepared but remains unreleased:
+signed-tag candidate builds, live Claude/Codex evidence, trusted-LAN rehearsal, independent
+attestation, and publication approval are still required. Reviewed requirements are in
+[PRD.md](PRD.md), and delivery gates are tracked in [ROADMAP.md](ROADMAP.md).
 
 ## Security boundary
 

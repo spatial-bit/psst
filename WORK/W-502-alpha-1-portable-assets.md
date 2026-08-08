@@ -1,6 +1,6 @@
 # W-502: v0.1.0-alpha.1 portable assets
 
-Status: implementation candidate
+Status: implementation candidate; native exact-tag evidence pending
 
 ## Objective
 
@@ -20,4 +20,10 @@ external SHA-256 checksum file from declared CI inputs.
 
 ## Evidence
 
-Pending independent review and native candidate CI.
+- Focused release-preparation tests prove deterministic re-packing for ZIP and tar.gz inputs,
+  exact single-root inventories, complete payload manifests, stable SPDX generation, unsafe archive
+  rejection, duplicate checksum-basename rejection, and checksum output/input collision rejection.
+- The candidate workflow defines only the three supported target archives, uses locked Rust 1.89
+  native builds and remapped paths, and scans packages before retaining them.
+- These are source and workflow checks, not released assets. Exact signed-tag native builds,
+  clean-download results, retained hashes, and independent candidate approval remain pending.

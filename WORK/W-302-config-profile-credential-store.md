@@ -1,6 +1,6 @@
 # W-302: Configuration, profiles, and credential store
 
-Status: implemented locally; independent review and cross-platform CI pending
+Status: verified for the product slice; expanded Windows release-filesystem qualification pending
 
 ## Objective
 
@@ -30,8 +30,8 @@ Implement shared non-secret configuration and crash-safe, user-restricted creden
 - Integrated `cargo fmt --check` and `cargo test --workspace --locked` passed. The concurrent W-306
   worktree had four `psst-mcp`-owned strict-Clippy findings; W-302's strict focused boundary was
   clean and the W-306 owner was notified.
-- Native Linux/macOS permission and locking evidence, GitHub Actions matrix evidence, and
-  independent adversarial approval remain required before completion.
+- Independent adversarial review approved the configuration, profile-binding, credential-store,
+  native permission/DACL, replacement, and lifetime-lock boundaries after the documented repairs.
 - Security repair, Windows local: abrupt child termination after durable temp flush leaves a
   protected, target-owned raw-secret remnant whose exact current-token-SID DACL is verified before
   the first secret byte is written; the test independently verifies that DACL, and the next store
@@ -57,8 +57,13 @@ Implement shared non-secret configuration and crash-safe, user-restricted creden
 - The supported Windows baseline for this slice is a local NT filesystem exposing the documented
   NT file-information and security-descriptor semantics. Cross-version Windows and alternate/local
   filesystem CI evidence for the `NtSetInformationFile` relative-rename path remains required before
-  release qualification; network filesystems are not claimed by this evidence.
+  expanded release qualification; network filesystems are not claimed by this evidence.
 - Final integrated Windows gate: `cargo fmt --all -- --check` and every workspace/all-target test
   passed, including the real CLI lifecycle and MCP stdio suites. Workspace strict Clippy reached two
   concurrent W-306-owned `psst-mcp/src/server.rs` findings; the W-302 focused all-target/all-feature
   strict-Clippy boundary passed.
+- The integrated candidate revision `a4af73ad800dde8ceff8209768685e0d7cf19809` passed the complete
+  workspace test, strict Clippy, and format gate on Windows, Ubuntu, and macOS in
+  [workflow 31274551562](https://github.com/spatial-bit/psst/actions/runs/31274551562). This includes
+  the native Windows DACL and lock cases plus Unix permission, no-follow, atomic-replacement, and
+  locking cases on Linux and macOS.

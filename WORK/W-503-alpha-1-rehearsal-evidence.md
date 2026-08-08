@@ -1,6 +1,6 @@
 # W-503: v0.1.0-alpha.1 rehearsal and evidence bundle
 
-Status: planned
+Status: rehearsal automation implemented; execution and external evidence pending
 
 ## Objective
 
@@ -23,4 +23,11 @@ owner-controlled isolated trusted network so CI never exposes an unauthenticated
 
 ## Evidence
 
-Pending W-502 and candidate CI.
+- The exact-tag candidate workflow defines checkoutless, no-Rust archive inspection, checksum and
+  manifest verification, portable install, local relay health, two-profile roster/send/replay,
+  relay restart, explicit acknowledgement, MCP initialization/stdout purity, uninstall, and user
+  data retention on all three supported native runners.
+- The workflow also defines a sanitized evidence bundle that binds the tag, revision, workflow run,
+  target matrix, hashes, SBOM location, rehearsal, limitations, and explicit external prerequisites.
+- Execution against a signed tag, an owner-controlled isolated trusted-LAN rehearsal, W-309 live
+  Claude/Codex evidence, independent reviewer attestation, and publication approval remain pending.

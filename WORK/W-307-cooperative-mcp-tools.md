@@ -1,6 +1,6 @@
 # W-307: Cooperative MCP tools
 
-Status: independently approved locally; native CI pending
+Status: verified
 
 ## Objective
 
@@ -57,9 +57,11 @@ Connect the reviewed MCP tools to the shared session runtime and typed client fo
   release, and survival of a new owner's sentinel metadata.
 - Coordinator Windows gate: serialized `cargo test --workspace --all-targets --all-features
   --locked -- --test-threads=1`, strict workspace Clippy with warnings denied, workspace formatting,
-  and diff integrity all pass. Windows/Linux/macOS CI remains pending, so cross-platform
-  verification is not yet claimed.
+  and diff integrity all pass.
 - Independent adversarial review initially rejected cancellable adapter publication, transition-time
   shutdown, and metadata-absent leave recovery. After the owned-publication, bounded-settlement, and
   startup-reconciliation repairs plus deterministic regressions, the fresh review approved W-307.
   A final ownership re-review also approved operation-gate draining before profile-lock release.
+- The integrated candidate revision `a4af73ad800dde8ceff8209768685e0d7cf19809` passed the complete
+  workspace test, strict Clippy, and format gate on Windows, Ubuntu, and macOS in
+  [workflow 31274551562](https://github.com/spatial-bit/psst/actions/runs/31274551562).
