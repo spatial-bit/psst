@@ -73,6 +73,11 @@ Last reconciled: 2026-08-08
 
 ## Ready
 
+- W-308 cooperative dogfood artifacts and documentation are verified. The reviewed revision
+  `c2e4dad3adf67b271a1b6a03a700711818e81503` passed all three native builds and all three
+  checkoutless clean-download rehearsals in
+  [workflow 31272964987](https://github.com/spatial-bit/psst/actions/runs/31272964987).
+
 ## Gate evidence
 
 - W-301 Windows local formatting, strict lint, and 174-test workspace suite: passed
@@ -82,6 +87,5 @@ Last reconciled: 2026-08-08
 
 ## Next coordinator action
 
-Commit the independently approved Slice 3 CLI/MCP/runtime integration, push the draft PR, and run
-native Linux, macOS, and Windows CI. The loopback ambiguous-commit CLI proxy remains behind explicit
-user authorization before final dogfood approval.
+Begin W-309's final cooperative dogfood gate using the verified W-308 archives. The loopback
+ambiguous-commit CLI proxy remains behind explicit user authorization before final dogfood approval.
