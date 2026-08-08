@@ -47,6 +47,12 @@ Last reconciled: 2026-08-08
 
 ## Active
 
+- W-308 native dogfood artifact and documentation candidate is independently approved locally. The
+  three-platform archives contain CLI, MCP, relay, license, revision/warning, and quickstart; native
+  and checkout-free clean-download jobs enforce exact paths/inventory/modes, pre-extraction traversal
+  rejection, decompressed ASCII/UTF-16LE canary scans, and version/relay/live-CLI/isolated-CLI/MCP
+  smoke. A remapped Windows ZIP passed the local artifact gates. Native package CI remains pending.
+
 - W-302 configuration, profiles, and credential store.
 - W-303 cooperative session runtime is independently approved after aggregate adversarial review.
   Windows coordinator gates are green for the full workspace test suite, strict lint, and format;

@@ -19,7 +19,9 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--target", required=True)
     parser.add_argument("--revision", required=True)
     parser.add_argument("--version", required=True)
-    parser.add_argument("--binary", required=True, type=Path)
+    parser.add_argument("--psst", required=True, type=Path)
+    parser.add_argument("--psst-mcp", required=True, type=Path)
+    parser.add_argument("--psst-relay", required=True, type=Path)
     parser.add_argument("--forbidden-canary", action="append", default=[])
     return parser.parse_args()
 
@@ -31,15 +33,18 @@ def main() -> None:
     supported_targets = {"windows-x86_64", "linux-x86_64", "macos-aarch64"}
     if args.target not in supported_targets:
         raise ValueError(f"unsupported target label: {args.target}")
-    root = f"psst-relay-dogfood-{args.version}-{args.revision}-{args.target}"
-    binary = "psst-relay.exe" if args.target.startswith("windows-") else "psst-relay"
+    root = f"psst-dogfood-{args.version}-{args.revision}-{args.target}"
+    suffix = ".exe" if args.target.startswith("windows-") else ""
+    binaries = {f"psst{suffix}", f"psst-mcp{suffix}", f"psst-relay{suffix}"}
     expected_files = {
-        f"{root}/{binary}",
+        *(f"{root}/{binary}" for binary in binaries),
         f"{root}/LICENSE",
         f"{root}/BUILD-INFO.txt",
         f"{root}/DEVELOPMENT-BUILD",
+        f"{root}/DOGFOOD-QUICKSTART.md",
     }
     expected_members = {f"{root}/", *expected_files}
+    member_payloads: dict[str, bytes] = {}
     if args.archive.suffix == ".zip":
         with zipfile.ZipFile(args.archive) as archive:
             members = archive.infolist()
@@ -63,6 +68,11 @@ def main() -> None:
             }
             build_info = archive.read(f"{root}/BUILD-INFO.txt").decode()
             warning = archive.read(f"{root}/DEVELOPMENT-BUILD").decode()
+            member_payloads = {
+                item.filename: archive.read(item.filename)
+                for item in members
+                if not item.is_dir()
+            }
     else:
         with tarfile.open(args.archive, "r:gz") as archive:
             members = archive.getmembers()
@@ -89,8 +99,15 @@ def main() -> None:
                 raise RuntimeError("required metadata files are not regular archive files")
             build_info = build_file.read().decode()
             warning = warning_file.read().decode()
+            for member in members:
+                if member.isfile():
+                    extracted = archive.extractfile(member)
+                    if extracted is None:
+                        raise RuntimeError(f"could not read archive member: {member.name}")
+                    member_payloads[member.name] = extracted.read()
     expected_modes = {
-        name: (0o755 if name.endswith(binary) else 0o644) for name in expected_files
+        name: (0o755 if PurePosixPath(name).name in binaries else 0o644)
+        for name in expected_files
     }
     if modes != expected_modes:
         raise RuntimeError(f"unexpected archive permissions: {modes}")
@@ -106,25 +123,35 @@ def main() -> None:
         "unsigned CI development artifact",
         "not a GitHub Release",
         "no compatibility promise",
+        "no installer",
+        "checksum manifest",
+        "SBOM",
+        "signature",
         "no TLS",
         "must never be exposed to the internet",
     )
     if any(text not in warning for text in required_warning_text):
         raise RuntimeError("development warning is incomplete")
-    version = subprocess.run(
-        [args.binary.resolve(), "--version"], check=True, capture_output=True, text=True
-    ).stdout.strip()
-    if version != f"psst-relay {args.version} ({args.revision})":
-        raise RuntimeError(f"binary version does not match archive metadata: {version!r}")
-    archive_bytes = args.archive.read_bytes()
-    binary_bytes = args.binary.read_bytes()
+    cli_version = run_version(args.psst)
+    relay_version = run_version(args.psst_relay)
+    if cli_version != f"psst {args.version}":
+        raise RuntimeError(f"CLI version does not match archive metadata: {cli_version!r}")
+    if relay_version != f"psst-relay {args.version} ({args.revision})":
+        raise RuntimeError(f"relay version does not match archive metadata: {relay_version!r}")
+    binary_payloads = {
+        "psst": args.psst.read_bytes(),
+        "psst-mcp": args.psst_mcp.read_bytes(),
+        "psst-relay": args.psst_relay.read_bytes(),
+    }
     for canary in args.forbidden_canary:
         encoded = canary.encode()
         encoded_wide = canary.encode("utf-16-le")
-        if encoded in archive_bytes or encoded_wide in archive_bytes:
-            raise RuntimeError(f"archive contains forbidden canary: {canary!r}")
-        if encoded in binary_bytes or encoded_wide in binary_bytes:
-            raise RuntimeError(f"binary contains forbidden canary: {canary!r}")
+        for member, payload in member_payloads.items():
+            if encoded in payload or encoded_wide in payload:
+                raise RuntimeError(f"archive member {member!r} contains forbidden canary: {canary!r}")
+        for name, payload in binary_payloads.items():
+            if encoded in payload or encoded_wide in payload:
+                raise RuntimeError(f"{name} binary contains forbidden canary: {canary!r}")
     print(f"archive inspection passed: {args.archive.name}")
 
 
@@ -142,6 +169,12 @@ def validate_member_names(names: list[str]) -> None:
             or any(part in ("", ".", "..") for part in path.parts)
         ):
             raise RuntimeError(f"unsafe archive member path: {raw_name!r}")
+
+
+def run_version(binary: Path) -> str:
+    return subprocess.run(
+        [binary.resolve(), "--version"], check=True, capture_output=True, text=True
+    ).stdout.strip()
 
 
 if __name__ == "__main__":

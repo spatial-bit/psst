@@ -11,9 +11,11 @@ on:
       - "crates/**"
       - "scripts/package-development-artifact.py"
       - "scripts/smoke-development-relay.py"
+      - "scripts/smoke-development-cooperative.py"
       - "scripts/inspect-development-artifact.py"
       - "scripts/extract-development-artifact.py"
       - "docs/development-artifacts.md"
+      - "docs/dogfood-quickstart.md"
   push:
     branches: [main]
 
@@ -25,7 +27,7 @@ env:
 
 jobs:
   build:
-    name: ${{ matrix.target }} dogfood relay
+    name: ${{ matrix.target }} cooperative dogfood
     strategy:
       fail-fast: false
       matrix:
@@ -33,17 +35,23 @@ jobs:
           - os: windows-latest
             target: windows-x86_64
             rust_host: x86_64-pc-windows-msvc
-            binary: target/release/psst-relay.exe
+            psst: target/release/psst.exe
+            mcp: target/release/psst-mcp.exe
+            relay: target/release/psst-relay.exe
             format: zip
           - os: ubuntu-latest
             target: linux-x86_64
             rust_host: x86_64-unknown-linux-gnu
-            binary: target/release/psst-relay
+            psst: target/release/psst
+            mcp: target/release/psst-mcp
+            relay: target/release/psst-relay
             format: tar.gz
           - os: macos-15
             target: macos-aarch64
             rust_host: aarch64-apple-darwin
-            binary: target/release/psst-relay
+            psst: target/release/psst
+            mcp: target/release/psst-mcp
+            relay: target/release/psst-relay
             format: tar.gz
     runs-on: ${{ matrix.os }}
     steps:
@@ -56,56 +64,67 @@ jobs:
         shell: bash
         run: >-
           rustc -vV | grep -F "host: ${{ matrix.rust_host }}"
-      - name: Build relay
+      - name: Build cooperative binaries
         env:
           PSST_BUILD_REVISION: ${{ github.sha }}
           PSST_W208_SECRET_CANARY: w208-secret-must-not-ship
           RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=.
-        run: cargo build --locked --release --package psst-relay
-      - name: Native binary smoke
-        run: python scripts/smoke-development-relay.py --binary "${{ matrix.binary }}"
+        run: cargo build --locked --release --package psst-cli --package psst-mcp --package psst-relay
+      - name: Native relay smoke
+        run: python scripts/smoke-development-relay.py --binary "${{ matrix.relay }}"
+      - name: Native CLI and MCP smoke
+        run: >-
+          python scripts/smoke-development-cooperative.py
+          --psst "${{ matrix.psst }}"
+          --psst-mcp "${{ matrix.mcp }}"
+          --version "${{ env.PSST_PACKAGE_VERSION }}"
       - name: Verify bundled SQLite dependency boundary
         shell: bash
         run: |
           if [[ "${{ runner.os }}" == "Linux" ]]; then
-            ! ldd "${{ matrix.binary }}" | grep -i sqlite
+            ! ldd "${{ matrix.relay }}" | grep -i sqlite
           elif [[ "${{ runner.os }}" == "macOS" ]]; then
-            ! otool -L "${{ matrix.binary }}" | grep -i sqlite
+            ! otool -L "${{ matrix.relay }}" | grep -i sqlite
           else
-            python -c "from pathlib import Path; data=Path(r'${{ matrix.binary }}').read_bytes().lower(); assert b'sqlite3.dll' not in data"
+            python -c "from pathlib import Path; data=Path(r'${{ matrix.relay }}').read_bytes().lower(); assert b'sqlite3.dll' not in data"
           fi
       - name: Package deterministic development layout
         shell: bash
         run: >-
           python scripts/package-development-artifact.py
-          --binary "${{ matrix.binary }}"
+          --psst "${{ matrix.psst }}"
+          --psst-mcp "${{ matrix.mcp }}"
+          --psst-relay "${{ matrix.relay }}"
           --target "${{ matrix.target }}"
           --revision "${{ github.sha }}"
           --version "${{ env.PSST_PACKAGE_VERSION }}"
-          --output "artifacts/psst-relay-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.${{ matrix.format }}"
+          --output "artifacts/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.${{ matrix.format }}"
           --license LICENSE
+          --quickstart docs/dogfood-quickstart.md
           --format "${{ matrix.format }}"
       - name: Inspect archive
         shell: bash
         run: >-
           python scripts/inspect-development-artifact.py
-          --archive "artifacts/psst-relay-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.${{ matrix.format }}"
+          --archive "artifacts/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.${{ matrix.format }}"
           --target "${{ matrix.target }}"
           --revision "${{ github.sha }}"
           --version "${{ env.PSST_PACKAGE_VERSION }}"
-          --binary "${{ matrix.binary }}"
+          --psst "${{ matrix.psst }}"
+          --psst-mcp "${{ matrix.mcp }}"
+          --psst-relay "${{ matrix.relay }}"
           --forbidden-canary "${{ github.workspace }}"
           --forbidden-canary "w208-secret-must-not-ship"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name != 'pull_request'
         with:
-          name: psst-relay-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}
-          path: artifacts/psst-relay-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.${{ matrix.format }}
+          name: psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}
+          path: artifacts/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.${{ matrix.format }}
           if-no-files-found: error
           retention-days: 14
 
   clean-download-rehearsal:
-    name: ${{ matrix.target }} clean downloaded relay rehearsal
+    name: ${{ matrix.target }} clean downloaded cooperative rehearsal
     needs: build
     if: github.event_name != 'pull_request'
     strategy:
@@ -115,41 +134,99 @@ jobs:
           - os: windows-latest
             target: windows-x86_64
             extension: zip
-            binary: psst-relay.exe
+            suffix: .exe
           - os: ubuntu-latest
             target: linux-x86_64
             extension: tar.gz
-            binary: psst-relay
+            suffix: ""
           - os: macos-15
             target: macos-aarch64
             extension: tar.gz
-            binary: psst-relay
+            suffix: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: psst-relay-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}
+          name: psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}
           path: downloaded
       - name: Extract downloaded artifact
         shell: pwsh
         run: |
           New-Item -ItemType Directory extracted | Out-Null
           if ('${{ matrix.extension }}' -eq 'zip') {
-            Expand-Archive 'downloaded/psst-relay-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.zip' extracted
+            $archive = 'downloaded/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.zip'
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $zip = [IO.Compression.ZipFile]::OpenRead($archive)
+            try { $members = @($zip.Entries | ForEach-Object FullName) } finally { $zip.Dispose() }
           } else {
-            tar -xzf 'downloaded/psst-relay-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.tar.gz' -C extracted
+            $archive = 'downloaded/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.tar.gz'
+            $members = @(tar -tzf $archive)
+            if ($LASTEXITCODE -ne 0) { throw 'Could not list downloaded archive' }
           }
-      - name: Smoke extracted relay without repository or Rust
+          foreach ($member in $members) {
+            $normalized = $member.Replace('\\', '/')
+            if ($normalized.StartsWith('/') -or $normalized -match '^[A-Za-z]:' -or @($normalized.Split('/')) -contains '..') { throw "unsafe archive member path: $member" }
+          }
+          $archiveRoot = 'psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}'
+          $expectedMembers = @(
+            "$archiveRoot/",
+            "$archiveRoot/BUILD-INFO.txt",
+            "$archiveRoot/DEVELOPMENT-BUILD",
+            "$archiveRoot/DOGFOOD-QUICKSTART.md",
+            "$archiveRoot/LICENSE",
+            "$archiveRoot/psst${{ matrix.suffix }}",
+            "$archiveRoot/psst-mcp${{ matrix.suffix }}",
+            "$archiveRoot/psst-relay${{ matrix.suffix }}"
+          ) | Sort-Object
+          $normalizedMembers = @($members | ForEach-Object { $_.Replace('\\', '/') }) | Sort-Object
+          if (Compare-Object $expectedMembers $normalizedMembers) { throw 'downloaded archive has unexpected members' }
+          if ('${{ matrix.extension }}' -eq 'zip') { Expand-Archive $archive extracted } else { tar -xzf $archive -C extracted }
+      - name: Inspect and smoke extracted cooperative archive without repository or Rust
         shell: pwsh
         run: |
-          $root = Resolve-Path 'extracted/psst-relay-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}'
-          $binary = Join-Path $root '${{ matrix.binary }}'
+          $root = Resolve-Path 'extracted/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}'
+          $psst = Join-Path $root 'psst${{ matrix.suffix }}'
+          $mcp = Join-Path $root 'psst-mcp${{ matrix.suffix }}'
+          $binary = Join-Path $root 'psst-relay${{ matrix.suffix }}'
+          $expected = @('BUILD-INFO.txt','DEVELOPMENT-BUILD','DOGFOOD-QUICKSTART.md','LICENSE','psst${{ matrix.suffix }}','psst-mcp${{ matrix.suffix }}','psst-relay${{ matrix.suffix }}') | Sort-Object
+          $entries = Get-ChildItem -LiteralPath $root -Force -Recurse
+          if ($entries | Where-Object { $_.PSIsContainer }) { throw 'archive contains an unexpected nested directory' }
+          if ($entries | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) { throw 'archive contains a link or reparse point' }
+          $actual = $entries | ForEach-Object {
+            if ($_.DirectoryName -ne $root.Path) { throw "archive contains a nested path: $($_.FullName)" }
+            $_.Name
+          } | Sort-Object
+          if (Compare-Object $expected $actual) { throw "unexpected extracted inventory: $actual" }
+          if (-not $IsWindows) {
+            foreach ($name in $expected) {
+              $mode = [IO.File]::GetUnixFileMode((Join-Path $root $name))
+              $executable = $name -in @('psst','psst-mcp','psst-relay')
+              $expectedMode = if ($executable) { 493 } else { 420 }
+              if ([int]$mode -ne $expectedMode) { throw "unexpected mode for ${name}: $mode" }
+            }
+          }
           $version = & $binary --version
           if ($version -ne 'psst-relay ${{ env.PSST_PACKAGE_VERSION }} (${{ github.sha }})') { throw "unexpected version: $version" }
+          $cliVersion = & $psst --version
+          if ($cliVersion -ne 'psst ${{ env.PSST_PACKAGE_VERSION }}') { throw "unexpected CLI version: $cliVersion" }
+          $canaries = @('${{ github.workspace }}','w208-secret-must-not-ship')
+          foreach ($file in Get-ChildItem -LiteralPath $root -File) {
+            $bytes = [IO.File]::ReadAllBytes($file.FullName)
+            $utf8 = [Text.Encoding]::UTF8.GetString($bytes)
+            $utf16 = [Text.Encoding]::Unicode.GetString($bytes)
+            foreach ($canary in $canaries) {
+              if ($utf8.Contains($canary) -or $utf16.Contains($canary)) { throw "canary in $($file.Name)" }
+            }
+          }
           $dataRoot = Join-Path $env:RUNNER_TEMP "psst-rehearsal-${{ matrix.target }}"
           New-Item -ItemType Directory $dataRoot | Out-Null
           $database = Join-Path $dataRoot 'relay.db'
-          $env:PSST_BIND = '127.0.0.1:17341'
+          $reservation = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+          $reservation.Start()
+          $relayPort = ([Net.IPEndPoint]$reservation.LocalEndpoint).Port
+          $reservation.Stop()
+          $relayUrl = "http://127.0.0.1:$relayPort"
+          $env:PSST_BIND = "127.0.0.1:$relayPort"
           $env:PSST_DATABASE = $database
           $env:PSST_LOG = 'error'
           $relay = Start-Process -FilePath $binary -PassThru -NoNewWindow
@@ -157,14 +234,17 @@ jobs:
             $ready = $false
             for ($attempt = 0; $attempt -lt 100; $attempt++) {
               try {
-                $health = Invoke-RestMethod 'http://127.0.0.1:17341/healthz' -TimeoutSec 1
-                $readiness = Invoke-RestMethod 'http://127.0.0.1:17341/readyz' -TimeoutSec 1
+                $health = Invoke-RestMethod "$relayUrl/healthz" -TimeoutSec 1
+                $readiness = Invoke-RestMethod "$relayUrl/readyz" -TimeoutSec 1
                 $schemaVersion = $readiness.schema_version
                 $integerSchema = $schemaVersion -is [int] -or $schemaVersion -is [long]
                 if ($health.status -eq 'ok' -and $readiness.status -eq 'ready' -and $integerSchema -and $schemaVersion -gt 0) { $ready = $true; break }
               } catch { Start-Sleep -Milliseconds 100 }
             }
             if (-not $ready) { throw 'extracted relay did not become healthy and ready' }
+            $cliHealth = & $psst --relay $relayUrl --json health
+            $cliHealthValue = $cliHealth | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or -not $cliHealthValue.ok -or $cliHealthValue.data.health.status -ne 'ok' -or $cliHealthValue.data.ready.status -ne 'ready') { throw 'CLI could not reach the extracted live relay' }
             if (-not (Test-Path -LiteralPath $database -PathType Leaf)) { throw 'explicit database was not created' }
             if (Test-Path -LiteralPath (Join-Path $root 'psst.db')) { throw 'relay created an implicit database beside the binary' }
           } finally {
@@ -174,8 +254,37 @@ jobs:
           $client = [System.Net.Sockets.TcpClient]::new()
           try {
             try {
-              $client.Connect('127.0.0.1', 17341)
+              $client.Connect('127.0.0.1', $relayPort)
               throw 'listener still accepts connections after relay stop'
             } catch [System.Net.Sockets.SocketException] { }
           } finally { $client.Dispose() }
+          $profileRoot = Join-Path $dataRoot 'profile'
+          New-Item -ItemType Directory $profileRoot | Out-Null
+          $env:APPDATA = $profileRoot
+          $env:LOCALAPPDATA = $profileRoot
+          $env:HOME = $profileRoot
+          $env:XDG_CONFIG_HOME = Join-Path $profileRoot 'config'
+          $env:XDG_DATA_HOME = Join-Path $profileRoot 'data'
+          $env:XDG_RUNTIME_DIR = Join-Path $profileRoot 'runtime'
+          $env:PSST_RELAY = 'http://127.0.0.1:9'
+          $env:PSST_PROFILE = 'clean-download-smoke'
+          $config = & $psst --json config show --effective
+          if ($LASTEXITCODE -ne 0 -or -not (($config | ConvertFrom-Json).ok)) { throw 'CLI config smoke failed' }
+          $start = [Diagnostics.ProcessStartInfo]::new()
+          $start.FileName = $mcp
+          $start.UseShellExecute = $false
+          $start.RedirectStandardInput = $true
+          $start.RedirectStandardOutput = $true
+          $start.RedirectStandardError = $true
+          $mcpProcess = [Diagnostics.Process]::new()
+          $mcpProcess.StartInfo = $start
+          if (-not $mcpProcess.Start()) { throw 'MCP process failed to start' }
+          $initialize = @{jsonrpc='2.0';id=1;method='initialize';params=@{protocolVersion='2025-11-25';capabilities=@{};clientInfo=@{name='clean-download';version='0'}}} | ConvertTo-Json -Compress -Depth 8
+          $mcpProcess.StandardInput.WriteLine($initialize)
+          $mcpProcess.StandardInput.Close()
+          if (-not $mcpProcess.WaitForExit(15000)) { $mcpProcess.Kill(); throw 'MCP handshake timed out' }
+          $mcpOut = $mcpProcess.StandardOutput.ReadToEnd().Trim()
+          $mcpErr = $mcpProcess.StandardError.ReadToEnd()
+          $mcpResponse = $mcpOut | ConvertFrom-Json
+          if ($mcpProcess.ExitCode -ne 0 -or $mcpErr -or $mcpResponse.id -ne 1 -or $mcpResponse.result.serverInfo.name -ne 'psst-mcp') { throw 'MCP handshake failed or streams were impure' }
           Remove-Item -LiteralPath $dataRoot -Recurse -Force
