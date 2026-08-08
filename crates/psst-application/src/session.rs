@@ -4704,7 +4704,9 @@ mod tests {
         let database = temp.path().join("relay.db");
         let mut relay = psst_relay::RelayConfig::local(database.clone());
         relay.bind = address;
-        relay.request_timeout = Duration::from_millis(100);
+        // Keep ordinary setup/database work clear of the reliability fault window. The injected
+        // post-commit delay below is deliberately much longer than this relay deadline.
+        relay.request_timeout = Duration::from_secs(1);
         let (shutdown, shutdown_rx) = watch::channel(false);
         let (probe_tx, probe_rx) = oneshot::channel();
         let server = tokio::spawn(psst_relay::serve_with_reliability_probe(
@@ -4714,7 +4716,7 @@ mod tests {
         ));
         let worker = probe_rx.await.unwrap();
         let config = ClientConfig {
-            request_timeout: Duration::from_secs(1),
+            request_timeout: Duration::from_secs(2),
             retry: psst_client::RetryPolicy {
                 max_attempts: 5,
                 initial_backoff: Duration::from_millis(10),
@@ -4774,7 +4776,7 @@ mod tests {
             .await
             .unwrap();
         let committed = worker
-            .reliability_delay_next_send_reply(Duration::from_millis(300))
+            .reliability_delay_next_send_reply(Duration::from_millis(1_500))
             .await
             .unwrap();
         let request = client
@@ -4800,7 +4802,7 @@ mod tests {
         assert_eq!(runtime.state().sends.inner.lock().await.inflight, 1);
         waiter.abort();
         let _ = waiter.await;
-        tokio::task::spawn_blocking(move || committed.recv_timeout(Duration::from_secs(2)))
+        tokio::task::spawn_blocking(move || committed.recv_timeout(Duration::from_secs(4)))
             .await
             .unwrap()
             .unwrap();
@@ -4855,7 +4857,7 @@ mod tests {
         );
 
         let committed = worker
-            .reliability_delay_next_send_reply(Duration::from_millis(300))
+            .reliability_delay_next_send_reply(Duration::from_millis(1_500))
             .await
             .unwrap();
         let second = client
@@ -4887,7 +4889,7 @@ mod tests {
                 .await
                 .is_err()
         );
-        tokio::task::spawn_blocking(move || committed.recv_timeout(Duration::from_secs(2)))
+        tokio::task::spawn_blocking(move || committed.recv_timeout(Duration::from_secs(4)))
             .await
             .unwrap()
             .unwrap();
