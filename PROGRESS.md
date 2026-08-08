@@ -1,8 +1,8 @@
 # Progress
 
-Current slice: 2 — Relay and typed client
-Current gate: Slice 1 satisfied on merged `main`; Slice 2 decomposed for execution
-Last reconciled: 2026-08-07
+Current slice: 3 — CLI and cooperative MCP
+Current gate: Slice 2 verified and merged; Slice 3 decomposed for execution
+Last reconciled: 2026-08-08
 
 ## Verified
 
@@ -37,14 +37,15 @@ Last reconciled: 2026-08-07
 - W-208 native development artifacts independently approved: revision-stamped relay-only archives, exact inventory/path scanning, bundled-SQLite inspection, native startup smoke, and clean downloaded rehearsal without Rust.
 - W-208 revision `c3340fe` passed standard CI and native artifact builds on Windows x86-64, Linux x86-64, and macOS ARM64: <https://github.com/spatial-bit/psst/actions/runs/31238500463> and <https://github.com/spatial-bit/psst/actions/runs/31238500451>.
 - Trusted upload and clean-download rehearsal retained three 14-day dogfood artifacts and passed on all three native platforms: <https://github.com/spatial-bit/psst/actions/runs/31238613310>.
+- Slice 2 merged to `main` at `d8d6d88`; merged standard CI and native development-artifact workflows passed: <https://github.com/spatial-bit/psst/actions/runs/31239047533> and <https://github.com/spatial-bit/psst/actions/runs/31239047525>.
 
 ## Active
 
-- Slice 2 complete; draft PR ready for final merge review.
+- W-301 Slice 3 CLI, profile, and MCP contracts.
 
 ## Ready
 
-- Slice 3 CLI and cooperative MCP work is ready after Slice 2 merge.
+- W-302 configuration/profile credential store, W-304 CLI shell, and W-306 MCP transport become ready after W-301.
 
 ## Gate evidence
 
@@ -55,4 +56,4 @@ Last reconciled: 2026-08-07
 
 ## Next coordinator action
 
-Perform final Slice 2 PR review, merge the green draft PR, then decompose and begin Slice 3 CLI/cooperative MCP work.
+Implement and independently review W-301 contracts, schemas, CLI help/JSON envelopes, MCP SDK compatibility, and Slice 4 exclusion checks.
