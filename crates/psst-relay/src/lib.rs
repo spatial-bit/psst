@@ -3578,9 +3578,12 @@ mod tests {
             Arc::new(SystemTimeSource),
         )
         .unwrap();
+        // Session setup is not part of this deadline assertion and must not inherit
+        // its deliberately tiny timeout on a contended CI runner.
+        let setup_app = router(worker.clone());
+        let _alice = join_for_messaging(setup_app.clone(), "alpha", "alice", true).await;
+        let bob = join_for_messaging(setup_app, "alpha", "bob", false).await;
         let app = router_with_limits(worker.clone(), 512 * 1024, 8, Duration::from_millis(25));
-        let _alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
-        let bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
 
         for (wait, maximum) in [
             (0, Duration::from_millis(200)),
