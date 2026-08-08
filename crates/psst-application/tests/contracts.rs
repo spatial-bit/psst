@@ -25,7 +25,10 @@ const ADAPTER_CONTROLLED_INPUT_KEYS: &[&str] = &[
 fn cli_help_is_golden_and_covers_required_grammar() {
     assert_eq!(DEFAULT_MAX_MESSAGE_BYTES, 65_536);
     assert_eq!(MAX_MESSAGE_BYTES, MAX_TOOL_MESSAGE_BYTES);
-    assert_eq!(CLI_HELP, include_str!("../fixtures/cli-help.txt"));
+    assert_eq!(
+        CLI_HELP,
+        normalize_newlines(include_str!("../fixtures/cli-help.txt"))
+    );
     for command in [
         "relay start",
         "health",
@@ -375,7 +378,8 @@ fn slice_four_paths_are_absent_from_slice_three_production_sources() {
             }
         }
     }
-    let lock = std::fs::read_to_string(manifest.join("../../Cargo.lock")).unwrap();
+    let lock =
+        normalize_newlines(&std::fs::read_to_string(manifest.join("../../Cargo.lock")).unwrap());
     let workspace = std::fs::read_to_string(manifest.join("../../Cargo.toml")).unwrap();
     assert!(workspace.contains("rmcp = { version = \"=3.1.2\", default-features = false, features = [\"server\", \"macros\", \"transport-io\"] }"));
     assert!(lock.contains("name = \"rmcp\"\nversion = \"3.1.2\""));
@@ -386,6 +390,10 @@ fn slice_four_paths_are_absent_from_slice_three_production_sources() {
                 .any(|line| line == format!("name = \"{dependency}\""))
         );
     }
+}
+
+fn normalize_newlines(value: &str) -> String {
+    value.replace("\r\n", "\n")
 }
 
 fn recursive_rust_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
