@@ -18,8 +18,9 @@ tokio.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
-psst-relay = { path = "../psst-relay" }
+psst-relay = { path = "../psst-relay", features = ["reliability-test-support"] }
 psst-core = { path = "../psst-core" }
+rusqlite.workspace = true
 psst-store = { path = "../psst-store" }
 tempfile.workspace = true
 

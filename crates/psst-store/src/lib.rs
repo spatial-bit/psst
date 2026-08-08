@@ -32,6 +32,7 @@ pub use repository::{
 const APPLICATION_ID: i32 = 0x5053_5354; // "PSST"
 const BUSY_TIMEOUT: Duration = Duration::from_millis(2_000);
 const JOURNAL_RETRY_INTERVAL: Duration = Duration::from_millis(10);
+const WAL_AUTOCHECKPOINT_PAGES: i64 = 256;
 
 #[derive(Debug)]
 struct Migration {
@@ -205,7 +206,10 @@ fn configure_connection(connection: &Connection) -> Result<(), StoreError> {
     enable_wal_with_bounded_retry(connection)?;
     // FULL is intentional: accepted writes must survive an OS crash, not merely a process crash.
     connection.pragma_update(None, "synchronous", "FULL")?;
-    connection.pragma_update(None, "wal_autocheckpoint", 1_000_i64)?;
+    // Keep automatic checkpoints small enough that a checkpoint cannot build a deep
+    // request backlog behind the single durable writer. FULL still fsyncs every commit;
+    // this changes checkpoint scheduling, not the accepted-write durability boundary.
+    connection.pragma_update(None, "wal_autocheckpoint", WAL_AUTOCHECKPOINT_PAGES)?;
     connection.pragma_update(None, "trusted_schema", false)?;
     Ok(())
 }
@@ -370,7 +374,10 @@ mod tests {
         assert_eq!(pragma_string(&store.connection, "journal_mode"), "wal");
         assert_eq!(pragma_i64(&store.connection, "synchronous"), 2);
         assert_eq!(pragma_i64(&store.connection, "busy_timeout"), 2_000);
-        assert_eq!(pragma_i64(&store.connection, "wal_autocheckpoint"), 1_000);
+        assert_eq!(
+            pragma_i64(&store.connection, "wal_autocheckpoint"),
+            WAL_AUTOCHECKPOINT_PAGES
+        );
         assert_eq!(pragma_i64(&store.connection, "trusted_schema"), 0);
         assert_eq!(
             pragma_i64(&store.connection, "application_id"),

@@ -760,6 +760,7 @@ dependencies = [
  "psst-relay",
  "psst-store",
  "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

@@ -118,7 +118,7 @@ impl NotificationRegistry {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "reliability-test-support"))]
     fn registration_count(&self) -> usize {
         self.entries
             .lock()
@@ -487,6 +487,13 @@ struct WorkerInner {
 
 #[allow(clippy::missing_errors_doc)]
 impl StoreWorker {
+    /// Returns the number of admitted long-poll waiters for reliability tests.
+    #[cfg(feature = "reliability-test-support")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn reliability_active_inbox_waiters(&self) -> usize {
+        self.inner.notifications.registration_count()
+    }
     pub fn start(
         path: &Path,
         capacity: usize,
@@ -1836,6 +1843,27 @@ pub async fn serve(
     shutdown: watch::Receiver<bool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     serve_with_router_factory(config, shutdown, |worker, config, shutdown| {
+        router_with_limits_and_shutdown(
+            worker,
+            config.max_body_bytes,
+            config.max_in_flight_requests,
+            config.request_timeout,
+            shutdown,
+        )
+    })
+    .await
+}
+
+/// Runs the production server while exposing a read-only worker probe to reliability tests.
+#[cfg(feature = "reliability-test-support")]
+#[doc(hidden)]
+pub async fn serve_with_reliability_probe(
+    config: RelayConfig,
+    shutdown: watch::Receiver<bool>,
+    probe: oneshot::Sender<StoreWorker>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    serve_with_router_factory(config, shutdown, move |worker, config, shutdown| {
+        let _ = probe.send(worker.clone());
         router_with_limits_and_shutdown(
             worker,
             config.max_body_bytes,
