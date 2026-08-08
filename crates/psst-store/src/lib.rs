@@ -6,11 +6,16 @@ use std::time::Duration;
 use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 
+mod authenticated;
 mod inbox;
 mod instance;
 mod message;
 mod repository;
 
+pub use authenticated::{
+    AuthenticatedSession, InboxPage, JoinAndClaim, JoinAndClaimOutcome, LeaveOutcome, MessageView,
+    SendByName, SendOutcome, SessionContext, TranscriptByName, TranscriptQuery,
+};
 pub use inbox::{
     AcknowledgeMessages, InboxQuery, MAX_ACK_MESSAGES, MAX_INBOX_MESSAGES, MAX_INBOX_OUTPUT_BYTES,
 };
@@ -27,6 +32,7 @@ pub use repository::{
 const APPLICATION_ID: i32 = 0x5053_5354; // "PSST"
 const BUSY_TIMEOUT: Duration = Duration::from_millis(2_000);
 const JOURNAL_RETRY_INTERVAL: Duration = Duration::from_millis(10);
+const WAL_AUTOCHECKPOINT_PAGES: i64 = 256;
 
 #[derive(Debug)]
 struct Migration {
@@ -53,6 +59,16 @@ const MIGRATIONS: &[Migration] = &[
     },
 ];
 
+/// Returns the schema version embedded in this build.
+///
+/// # Panics
+/// Panics only when the compile-time migration table contains a version outside `u32`.
+#[must_use]
+pub fn current_schema_version() -> u32 {
+    u32::try_from(MIGRATIONS.last().map_or(0, |migration| migration.version))
+        .expect("validated migration versions fit u32")
+}
+
 /// Errors that can prevent a store from opening safely.
 #[derive(Debug)]
 pub enum StoreError {
@@ -62,6 +78,7 @@ pub enum StoreError {
     MigrationChecksumMismatch { version: i64 },
     InvalidMigrationLedger { expected: i64, actual: i64 },
     InvalidMigrationPlan(&'static str),
+    WorkerUnavailable,
 }
 
 impl std::fmt::Display for StoreError {
@@ -89,6 +106,7 @@ impl std::fmt::Display for StoreError {
                 "migration ledger expected version {expected} but found {actual}"
             ),
             Self::InvalidMigrationPlan(message) => formatter.write_str(message),
+            Self::WorkerUnavailable => formatter.write_str("store worker could not start"),
         }
     }
 }
@@ -143,6 +161,35 @@ impl Store {
         Ok(current_version(&self.connection)?.unwrap_or(0))
     }
 
+    /// Verifies that the connection is usable and the embedded schema is current.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable store error when the query fails or the schema is incompatible.
+    pub fn readiness(&self) -> Result<(), StoreError> {
+        let version = self.schema_version()?;
+        let supported = MIGRATIONS.last().map_or(0, |migration| migration.version);
+        if version != supported {
+            return Err(StoreError::FutureSchema {
+                database: version,
+                supported,
+            });
+        }
+        self.connection.query_row("SELECT 1", [], |_| Ok(()))?;
+        Ok(())
+    }
+
+    /// Performs a bounded passive WAL checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable store error when `SQLite` cannot complete the checkpoint.
+    pub fn checkpoint(&self) -> Result<(), StoreError> {
+        self.connection
+            .pragma_update(None, "wal_checkpoint", "PASSIVE")?;
+        Ok(())
+    }
+
     /// Opens a second fully configured connection to the same database file.
     ///
     /// Callers should normally open a new [`Store`] with [`Store::open`]. This
@@ -159,7 +206,10 @@ fn configure_connection(connection: &Connection) -> Result<(), StoreError> {
     enable_wal_with_bounded_retry(connection)?;
     // FULL is intentional: accepted writes must survive an OS crash, not merely a process crash.
     connection.pragma_update(None, "synchronous", "FULL")?;
-    connection.pragma_update(None, "wal_autocheckpoint", 1_000_i64)?;
+    // Keep automatic checkpoints small enough that a checkpoint cannot build a deep
+    // request backlog behind the single durable writer. FULL still fsyncs every commit;
+    // this changes checkpoint scheduling, not the accepted-write durability boundary.
+    connection.pragma_update(None, "wal_autocheckpoint", WAL_AUTOCHECKPOINT_PAGES)?;
     connection.pragma_update(None, "trusted_schema", false)?;
     Ok(())
 }
@@ -324,7 +374,10 @@ mod tests {
         assert_eq!(pragma_string(&store.connection, "journal_mode"), "wal");
         assert_eq!(pragma_i64(&store.connection, "synchronous"), 2);
         assert_eq!(pragma_i64(&store.connection, "busy_timeout"), 2_000);
-        assert_eq!(pragma_i64(&store.connection, "wal_autocheckpoint"), 1_000);
+        assert_eq!(
+            pragma_i64(&store.connection, "wal_autocheckpoint"),
+            WAL_AUTOCHECKPOINT_PAGES
+        );
         assert_eq!(pragma_i64(&store.connection, "trusted_schema"), 0);
         assert_eq!(
             pragma_i64(&store.connection, "application_id"),

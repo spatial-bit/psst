@@ -49,55 +49,72 @@ impl Store {
             .connection_mut()
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
 
-        if let Some(existing) = find_by_dedupe(&transaction, request)? {
-            if existing.semantics == request.semantics {
-                transaction.commit()?;
-                return Ok(existing);
-            }
-            return Err(RepositoryError::IdempotencyConflict);
-        }
-
-        authorize_squad_and_members(&transaction, &request.semantics)?;
-        authorize_reply(&transaction, &request.semantics)?;
-
-        let body_hash = Sha256::digest(request.semantics.body.as_str().as_bytes());
-        transaction.execute(
-            "INSERT INTO messages(
-                id, squad_id, sender_membership_id, recipient_membership_id,
-                body, body_hash, priority, reply_to, correlation_id, dedupe_key, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
-                request.id.as_str(),
-                request.semantics.squad.as_str(),
-                request.semantics.sender.as_str(),
-                request.semantics.recipient.as_str(),
-                request.semantics.body.as_str(),
-                body_hash.as_slice(),
-                priority_text(request.semantics.priority),
-                request.semantics.reply_to.as_ref().map(MessageId::as_str),
-                request
-                    .semantics
-                    .correlation_id
-                    .as_ref()
-                    .map(CorrelationId::as_str),
-                request.dedupe_key.as_str(),
-                request.created_at.as_i64(),
-            ],
-        )?;
-        let sequence = transaction.last_insert_rowid();
-        let result = MessageRecord {
-            sequence,
-            id: request.id.clone(),
-            semantics: request.semantics.clone(),
-            dedupe_key: request.dedupe_key.clone(),
-            created_at: request.created_at,
-        };
+        let result = send_in_transaction(&transaction, request)?;
         transaction.commit()?;
         if fail_after_commit {
             return Err(RepositoryError::InjectedFailure);
         }
         Ok(result)
     }
+}
+
+pub(crate) fn send_in_transaction(
+    transaction: &Transaction<'_>,
+    request: &SendMessage,
+) -> Result<MessageRecord, RepositoryError> {
+    if let Some(result) = resolve_retry(transaction, request)? {
+        return result;
+    }
+
+    authorize_squad_and_members(transaction, &request.semantics)?;
+    authorize_reply(transaction, &request.semantics)?;
+
+    let body_hash = Sha256::digest(request.semantics.body.as_str().as_bytes());
+    transaction.execute(
+        "INSERT INTO messages(
+                id, squad_id, sender_membership_id, recipient_membership_id,
+                body, body_hash, priority, reply_to, correlation_id, dedupe_key, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![
+            request.id.as_str(),
+            request.semantics.squad.as_str(),
+            request.semantics.sender.as_str(),
+            request.semantics.recipient.as_str(),
+            request.semantics.body.as_str(),
+            body_hash.as_slice(),
+            priority_text(request.semantics.priority),
+            request.semantics.reply_to.as_ref().map(MessageId::as_str),
+            request
+                .semantics
+                .correlation_id
+                .as_ref()
+                .map(CorrelationId::as_str),
+            request.dedupe_key.as_str(),
+            request.created_at.as_i64(),
+        ],
+    )?;
+    let sequence = transaction.last_insert_rowid();
+    let result = MessageRecord {
+        sequence,
+        id: request.id.clone(),
+        semantics: request.semantics.clone(),
+        dedupe_key: request.dedupe_key.clone(),
+        created_at: request.created_at,
+    };
+    Ok(result)
+}
+
+pub(crate) fn resolve_retry(
+    transaction: &Transaction<'_>,
+    request: &SendMessage,
+) -> Result<Option<Result<MessageRecord, RepositoryError>>, RepositoryError> {
+    Ok(find_by_dedupe(transaction, request)?.map(|existing| {
+        if existing.semantics == request.semantics {
+            Ok(existing)
+        } else {
+            Err(RepositoryError::IdempotencyConflict)
+        }
+    }))
 }
 
 fn authorize_squad_and_members(
@@ -158,7 +175,7 @@ fn authorize_reply(
     }
 }
 
-fn find_by_dedupe(
+pub(crate) fn find_by_dedupe(
     transaction: &Transaction<'_>,
     request: &SendMessage,
 ) -> Result<Option<MessageRecord>, RepositoryError> {

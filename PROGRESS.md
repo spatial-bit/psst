@@ -1,7 +1,7 @@
 # Progress
 
 Current slice: 2 — Relay and typed client
-Current gate: Slice 1 satisfied; merge pending
+Current gate: Slice 1 satisfied on merged `main`; Slice 2 decomposed for execution
 Last reconciled: 2026-08-07
 
 ## Verified
@@ -24,14 +24,27 @@ Last reconciled: 2026-08-07
 - W-106 cross-platform PR evidence passed on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31219378486>.
 - W-107 Slice 1 reliability gate independently approved: 80 tests, repeated stress, real held-lock contention, mid-ack rollback, and abrupt-process commit-boundary evidence.
 - W-107 revision `4c8e094` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31220050245>.
+- Slice 1 merged to `main` at `fe4f0bf`; the merged revision passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31220421510>.
+- W-201 protocol/OpenAPI contract independently reviewed and verified; GitHub Actions passed on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31223796106>.
+- W-202 authenticated store boundary and relay runtime independently approved with 126 passing tests; revision `b99f9c4` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31227930335>.
+- W-203 lifecycle HTTP API independently approved with 130 passing tests; revision `1d2a2ca` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31229928971>.
+- W-204 message, inbox, acknowledgement, and transcript HTTP API independently approved with 137 passing tests; revision `7591018` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31231619550>.
+- W-205 bounded long polling independently approved with 146 passing tests; revision `2273849` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31233081040>.
+- W-206 typed Rust client independently approved with 158 passing tests: complete Slice 2 API coverage, memory-only redacted credentials, bounded transport, total operation deadlines, conservative retries, exact prepared-send idempotency, real ambiguous-commit recovery, and restart/offline/resume E2E evidence.
+- W-206 revision `f1db97c` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31235067734>.
+- W-207 Slice 2 reliability gate independently approved with 162 passing tests, 100 production TCP watchers, exact restart reconciliation, bounded disconnect/shutdown/lock recovery, and repeated release performance above 100 messages/second with p95 below 100 ms.
+- W-207 revision `9bded29` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31237113554>.
+- W-208 native development artifacts independently approved: revision-stamped relay-only archives, exact inventory/path scanning, bundled-SQLite inspection, native startup smoke, and clean downloaded rehearsal without Rust.
+- W-208 revision `c3340fe` passed standard CI and native artifact builds on Windows x86-64, Linux x86-64, and macOS ARM64: <https://github.com/spatial-bit/psst/actions/runs/31238500463> and <https://github.com/spatial-bit/psst/actions/runs/31238500451>.
+- Trusted upload and clean-download rehearsal retained three 14-day dogfood artifacts and passed on all three native platforms: <https://github.com/spatial-bit/psst/actions/runs/31238613310>.
 
 ## Active
 
-- Merge reviewed Slice 1 draft PR #1 to `main`.
+- Slice 2 complete; draft PR ready for final merge review.
 
 ## Ready
 
-- Decompose Slice 2 relay and typed-client work units from the approved PRD.
+- Slice 3 CLI and cooperative MCP work is ready after Slice 2 merge.
 
 ## Gate evidence
 
@@ -42,4 +55,4 @@ Last reconciled: 2026-08-07
 
 ## Next coordinator action
 
-Merge Slice 1, confirm `main` green, then begin Slice 2 relay and typed-client work units.
+Perform final Slice 2 PR review, merge the green draft PR, then decompose and begin Slice 3 CLI/cooperative MCP work.

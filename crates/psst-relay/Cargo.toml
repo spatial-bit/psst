@@ -1,0 +1,32 @@
+[package]
+name = "psst-relay"
+description = "Bounded HTTP relay runtime for Psst"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+reliability-test-support = []
+
+[dependencies]
+axum.workspace = true
+getrandom.workspace = true
+psst-protocol = { path = "../psst-protocol" }
+psst-store = { path = "../psst-store" }
+psst-core = { path = "../psst-core" }
+serde.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tower.workspace = true
+
+[dev-dependencies]
+rusqlite.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

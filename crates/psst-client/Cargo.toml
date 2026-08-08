@@ -1,0 +1,28 @@
+[package]
+name = "psst-client"
+description = "Bounded typed HTTP client for the Psst relay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+getrandom.workspace = true
+http.workspace = true
+psst-protocol = { path = "../psst-protocol" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+psst-relay = { path = "../psst-relay", features = ["reliability-test-support"] }
+psst-core = { path = "../psst-core" }
+rusqlite.workspace = true
+psst-store = { path = "../psst-store" }
+tempfile.workspace = true
+
+[lints]
+workspace = true

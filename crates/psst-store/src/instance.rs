@@ -85,6 +85,12 @@ pub struct ClaimOutcome {
 }
 
 impl ClaimOutcome {
+    pub(crate) const fn new(instance: InstanceRecord, resume_token: ResumeToken) -> Self {
+        Self {
+            instance,
+            resume_token,
+        }
+    }
     #[must_use]
     pub const fn instance(&self) -> &InstanceRecord {
         &self.instance
@@ -348,7 +354,7 @@ impl Store {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn insert_instance(
+pub(crate) fn insert_instance(
     transaction: &Transaction<'_>,
     id: InstanceId,
     membership_id: MembershipId,
@@ -417,7 +423,7 @@ fn require_active_membership(
     }
 }
 
-fn authenticate(stored: &[u8], supplied: &ResumeToken) -> Result<(), RepositoryError> {
+pub(crate) fn authenticate(stored: &[u8], supplied: &ResumeToken) -> Result<(), RepositoryError> {
     let supplied = token_hash(supplied);
     if stored.len() == supplied.len() && bool::from(stored.ct_eq(supplied.as_slice())) {
         Ok(())
@@ -433,7 +439,7 @@ fn token_hash(token: &ResumeToken) -> [u8; 32] {
     digest.finalize().into()
 }
 
-fn validate_observation(
+pub(crate) fn validate_observation(
     availability: Availability,
     source: AvailabilitySource,
     observed_at: UnixMillis,
@@ -443,7 +449,10 @@ fn validate_observation(
         .map_err(|_| RepositoryError::InvalidRequest)
 }
 
-fn validate_client(client_kind: &str, hostname: Option<&str>) -> Result<(), RepositoryError> {
+pub(crate) fn validate_client(
+    client_kind: &str,
+    hostname: Option<&str>,
+) -> Result<(), RepositoryError> {
     if client_kind.trim().is_empty() || hostname.is_some_and(|value| value.trim().is_empty()) {
         Err(RepositoryError::InvalidRequest)
     } else {
