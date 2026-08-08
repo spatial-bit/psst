@@ -1,6 +1,6 @@
 # W-204: Durable messaging, acknowledgement, and transcript HTTP API
 
-Status: blocked on W-203
+Status: active
 
 ## Objective
 

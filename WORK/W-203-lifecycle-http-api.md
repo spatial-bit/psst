@@ -1,6 +1,6 @@
 # W-203: Squad, membership, lease, and roster HTTP API
 
-Status: active
+Status: verified
 
 ## Objective
 
@@ -50,4 +50,7 @@ Do not implement messaging, inbox, transcript, long polling, token files, CLI, M
 
 ## Verification evidence
 
-Pending.
+- Independently reviewed and approved after closure of payload-limit mapping, canonical credential concealment, full lifecycle HTTP coverage, malformed request handling, and real bound-server concurrency/race findings.
+- `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` passed.
+- `cargo test --workspace` passed with 130 tests: 17 core, 18 protocol, 22 relay, and 73 store tests, plus doc tests.
+- Revision `1d2a2ca` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31229928971>.
