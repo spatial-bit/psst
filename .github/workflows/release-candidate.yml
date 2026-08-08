@@ -80,7 +80,7 @@ jobs:
       - run: rustup toolchain install 1.89.0 --profile minimal --no-self-update
       - run: rustup default 1.89.0
       - shell: bash
-        run: rustc -vV | grep -F "host: ${{ matrix.host }}"
+        run: 'rustc -vV | grep -F "host: ${{ matrix.host }}"'
       - name: Verify release identity on native checkout
         run: >-
           python scripts/check-release-version.py
