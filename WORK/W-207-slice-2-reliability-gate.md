@@ -1,6 +1,6 @@
 # W-207: Slice 2 relay/client reliability and shutdown gate
 
-Status: blocked on W-206
+Status: active
 
 ## Objective
 

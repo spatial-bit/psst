@@ -1,6 +1,6 @@
 # W-206: Typed Rust client and retry boundaries
 
-Status: active
+Status: verified
 
 ## Objective
 
@@ -50,4 +50,8 @@ Do not implement durable token files (Slice 3), heartbeat background loops, CLI,
 
 ## Verification evidence
 
-Pending.
+- Revision `f1db97c` independently approved after typed-client contract and implementation review.
+- All 158 workspace tests passed locally on Windows; formatting, strict Clippy, documentation, and diff checks passed.
+- Real relay/SQLite tests cover the full lifecycle, restart/resume, offline mail, bounded responses, cancellation, and exact-key retry after an ambiguous committed send.
+- The Windows-only CI timing failure was traced to test scheduling headroom, corrected without changing production behavior, and independently approved after ten consecutive focused Windows passes.
+- GitHub Actions passed on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31235067734>.

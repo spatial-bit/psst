@@ -30,14 +30,16 @@ Last reconciled: 2026-08-07
 - W-203 lifecycle HTTP API independently approved with 130 passing tests; revision `1d2a2ca` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31229928971>.
 - W-204 message, inbox, acknowledgement, and transcript HTTP API independently approved with 137 passing tests; revision `7591018` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31231619550>.
 - W-205 bounded long polling independently approved with 146 passing tests; revision `2273849` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31233081040>.
+- W-206 typed Rust client independently approved with 158 passing tests: complete Slice 2 API coverage, memory-only redacted credentials, bounded transport, total operation deadlines, conservative retries, exact prepared-send idempotency, real ambiguous-commit recovery, and restart/offline/resume E2E evidence.
+- W-206 revision `f1db97c` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31235067734>.
 
 ## Active
 
-- W-206 typed Rust client, credential handling, and retry semantics.
+- W-207 Slice 2 relay/client reliability and shutdown gate.
 
 ## Ready
 
-- W-207 Slice 2 reliability gate is ready after W-206.
+- W-208 cross-platform development artifacts is ready after W-207.
 
 ## Gate evidence
 
@@ -48,4 +50,4 @@ Last reconciled: 2026-08-07
 
 ## Next coordinator action
 
-Implement W-206 typed Rust client, independently review it, and capture cross-platform CI evidence.
+Execute W-207 stress, fault, performance, restart, cancellation, and shutdown verification; independently review the gate and capture cross-platform CI evidence.
