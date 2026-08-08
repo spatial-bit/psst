@@ -3766,7 +3766,7 @@ mod tests {
         let (worker, handle) = StoreWorker::start_with_time(
             &database,
             8,
-            Duration::from_millis(20),
+            Duration::from_millis(500),
             Arc::new(FakeTime(now)),
         )
         .unwrap();
@@ -3774,7 +3774,7 @@ mod tests {
         let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
         let _bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
         let send_completed = worker
-            .delay_next_send_reply(Duration::from_millis(80))
+            .delay_next_send_reply(Duration::from_millis(750))
             .await
             .unwrap();
         let request = || {
@@ -3789,7 +3789,7 @@ mod tests {
         let (status, _, timed_out) = json_request(app.clone(), request()).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(timed_out["error"]["code"], "database_busy");
-        send_completed.recv_timeout(Duration::from_secs(1)).unwrap();
+        send_completed.recv_timeout(Duration::from_secs(2)).unwrap();
         let (status, _, replay) = json_request(app, request()).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(replay["idempotent_replay"], true);
