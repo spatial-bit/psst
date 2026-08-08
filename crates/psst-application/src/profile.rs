@@ -2,6 +2,10 @@ use crate::{ConfigError, PlatformPaths, canonical_relay_origin, validate_profile
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
@@ -109,12 +113,10 @@ impl ProfileLock {
         options.read(true).write(true).create(true).truncate(false);
         #[cfg(unix)]
         {
-            use std::os::unix::fs::OpenOptionsExt;
             options.custom_flags(libc::O_NOFOLLOW).mode(0o600);
         }
         #[cfg(windows)]
         {
-            use std::os::windows::fs::OpenOptionsExt;
             options.share_mode(1 | 2).custom_flags(0x0020_0000);
         }
         let file = options.open(path)?;
@@ -162,7 +164,9 @@ pub fn load_profile(path: &Path) -> io::Result<Option<ProfileBinding>> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "profile parent unavailable"))?;
-    let _directory_guard = open_directory_guard(parent)?;
+    let directory_guard = open_directory_guard(parent)?;
+    #[cfg(windows)]
+    let _ = &directory_guard;
     reject_symlink(path)?;
     #[cfg(windows)]
     let mut file = OpenOptions::new();
@@ -170,7 +174,6 @@ pub fn load_profile(path: &Path) -> io::Result<Option<ProfileBinding>> {
     file.read(true);
     #[cfg(windows)]
     {
-        use std::os::windows::fs::OpenOptionsExt;
         file.share_mode(1 | 2).custom_flags(0x0020_0000);
     }
     #[cfg(windows)]
@@ -178,7 +181,7 @@ pub fn load_profile(path: &Path) -> io::Result<Option<ProfileBinding>> {
     #[cfg(unix)]
     let mut file = File::from(
         rustix::fs::openat(
-            &_directory_guard,
+            &directory_guard,
             path.file_name().ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidInput, "profile name unavailable")
             })?,
@@ -187,6 +190,7 @@ pub fn load_profile(path: &Path) -> io::Result<Option<ProfileBinding>> {
         )
         .map_err(io::Error::from)?,
     );
+    #[cfg(windows)]
     reject_handle_reparse(&file)?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
@@ -224,16 +228,13 @@ pub fn verify_profile_origin(binding: &ProfileBinding, requested: &str) -> Resul
 /// # Errors
 /// Rejects path substitution and propagates durable-write failures.
 pub fn store_profile(path: &Path, binding: &ProfileBinding) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-        reject_symlink(parent)?;
-        let directory_guard = open_directory_guard(parent)?;
-        return store_profile_guarded(path, binding, &directory_guard);
-    }
-    Err(io::Error::new(
-        io::ErrorKind::InvalidInput,
-        "profile parent unavailable",
-    ))
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "profile parent unavailable"))?;
+    fs::create_dir_all(parent)?;
+    reject_symlink(parent)?;
+    let directory_guard = open_directory_guard(parent)?;
+    store_profile_guarded(path, binding, &directory_guard)
 }
 fn store_profile_guarded(
     path: &Path,
@@ -248,7 +249,7 @@ fn store_profile_guarded(
 fn atomic_replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
     #[cfg(unix)]
     {
-        return atomic_replace_unix(path, bytes);
+        atomic_replace_unix(path, bytes)
     }
     #[cfg(windows)]
     {
@@ -268,7 +269,6 @@ fn atomic_replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
             options.write(true).create_new(true);
             #[cfg(unix)]
             {
-                use std::os::unix::fs::OpenOptionsExt;
                 options.mode(0o600);
             }
             let mut file = options.open(&temp)?;
@@ -347,18 +347,15 @@ pub(crate) fn reject_symlink(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
 fn reject_handle_reparse(file: &File) -> io::Result<()> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        if file.metadata()?.file_attributes() & 0x400 != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "reparse substitution rejected",
-            ));
-        }
+    use std::os::windows::fs::MetadataExt;
+    if file.metadata()?.file_attributes() & 0x400 != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "reparse substitution rejected",
+        ));
     }
-    let _ = file;
     Ok(())
 }
 fn open_directory_guard(path: &Path) -> io::Result<File> {
@@ -366,12 +363,10 @@ fn open_directory_guard(path: &Path) -> io::Result<File> {
     options.read(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::OpenOptionsExt;
         options
             .share_mode(1 | 2)
             .custom_flags(0x0200_0000 | 0x0020_0000);
