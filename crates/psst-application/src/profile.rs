@@ -120,6 +120,7 @@ impl ProfileLock {
             options.share_mode(1 | 2).custom_flags(0x0020_0000);
         }
         let file = options.open(path)?;
+        #[cfg(windows)]
         reject_handle_reparse(&file)?;
         file.try_lock_exclusive()?;
         Ok(Self {
