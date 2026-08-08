@@ -223,7 +223,11 @@ enum StoreCommand {
         reply: oneshot::Sender<Result<(), WorkerError>>,
     },
     #[cfg(test)]
-    DelayNextSendReply(Duration, oneshot::Sender<Result<(), WorkerError>>),
+    DelayNextSendReply(
+        Duration,
+        std::sync::mpsc::Sender<()>,
+        oneshot::Sender<Result<(), WorkerError>>,
+    ),
     Join(
         WorkerJoin,
         oneshot::Sender<Result<JoinAndClaimOutcome, RepositoryError>>,
@@ -298,7 +302,7 @@ impl StoreCommand {
                 let _ = reply.send(Err(WorkerError::Unavailable));
             }
             #[cfg(test)]
-            Self::DelayNextSendReply(_, reply) => {
+            Self::DelayNextSendReply(_, _, reply) => {
                 let _ = reply.send(Err(WorkerError::Unavailable));
             }
             Self::Ready(reply) | Self::Checkpoint(reply) => {
@@ -468,8 +472,8 @@ impl StoreWorker {
                             let _ = reply.send(result);
                         }
                         #[cfg(test)]
-                        StoreCommand::DelayNextSendReply(delay, reply) => {
-                            next_send_reply_delay = Some(delay);
+                        StoreCommand::DelayNextSendReply(delay, completed, reply) => {
+                            next_send_reply_delay = Some((delay, completed));
                             let _ = reply.send(Ok(()));
                         }
                         StoreCommand::Join(request, reply) => {
@@ -526,10 +530,16 @@ impl StoreWorker {
                             let session = session(&credential, now);
                             let result = store.authenticated_send_by_name(&session, &request);
                             #[cfg(test)]
-                            if let Some(delay) = next_send_reply_delay.take() {
-                                std::thread::sleep(delay);
-                            }
+                            let delayed_completion =
+                                next_send_reply_delay.take().map(|(delay, completed)| {
+                                    std::thread::sleep(delay);
+                                    completed
+                                });
                             let _ = reply.send(result);
+                            #[cfg(test)]
+                            if let Some(completed) = delayed_completion {
+                                let _ = completed.send(());
+                            }
                         }
                         StoreCommand::Pending(credential, limit, reply) => {
                             let session = session(&credential, clock.now());
@@ -638,9 +648,14 @@ impl StoreWorker {
     }
 
     #[cfg(test)]
-    async fn delay_next_send_reply(&self, delay: Duration) -> Result<(), WorkerError> {
-        self.request(|reply| StoreCommand::DelayNextSendReply(delay, reply))
-            .await
+    async fn delay_next_send_reply(
+        &self,
+        delay: Duration,
+    ) -> Result<std::sync::mpsc::Receiver<()>, WorkerError> {
+        let (completed, completion) = std::sync::mpsc::channel();
+        self.request(|reply| StoreCommand::DelayNextSendReply(delay, completed, reply))
+            .await?;
+        Ok(completion)
     }
 
     pub async fn join(&self, request: WorkerJoin) -> Result<JoinAndClaimOutcome, DispatchError> {
@@ -3111,7 +3126,7 @@ mod tests {
         let app = router(worker.clone());
         let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
         let _bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
-        worker
+        let send_completed = worker
             .delay_next_send_reply(Duration::from_millis(80))
             .await
             .unwrap();
@@ -3127,7 +3142,7 @@ mod tests {
         let (status, _, timed_out) = json_request(app.clone(), request()).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(timed_out["error"]["code"], "database_busy");
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        send_completed.recv_timeout(Duration::from_secs(1)).unwrap();
         let (status, _, replay) = json_request(app, request()).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(replay["idempotent_replay"], true);
