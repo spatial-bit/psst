@@ -8,6 +8,7 @@ use std::{
 };
 
 #[test]
+#[allow(clippy::too_many_lines)] // One ordered transcript proves negotiation through shutdown.
 fn pinned_sdk_completes_initialize_ping_and_clean_stdio_shutdown() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_psst-mcp"))
         .stdin(Stdio::piped())
@@ -65,6 +66,82 @@ fn pinned_sdk_completes_initialize_ping_and_clean_stdio_shutdown() {
         serde_json::json!({"jsonrpc":"2.0","id":2,"result":{}})
     );
 
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}})
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    let listed = stdout.read(&mut child);
+    assert_eq!(listed["id"], 3);
+    let expected = serde_json::to_value(psst_mcp::wire_tools()).unwrap();
+    assert_eq!(listed["result"]["tools"], expected);
+
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"squad_list","arguments":{}}})
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    let unavailable = stdout.read(&mut child);
+    assert_eq!(unavailable["id"], 4);
+    assert_eq!(unavailable["result"]["isError"], true);
+    assert_eq!(
+        unavailable["result"]["structuredContent"]["error"]["code"],
+        "unsupported"
+    );
+    let tool_text = unavailable["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(tool_text).unwrap(),
+        unavailable["result"]["structuredContent"]
+    );
+    assert!(!tool_text.contains("exit_class"));
+
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"not_a_psst_tool","arguments":{}}})
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    let unknown = stdout.read(&mut child);
+    assert_eq!(unknown["id"], 5);
+    assert_eq!(unknown["error"]["code"], -32602);
+
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"squad_join","arguments":{}}})
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    let invalid = stdout.read(&mut child);
+    assert_eq!(invalid["id"], 6);
+    assert_eq!(invalid["error"]["code"], -32602);
+
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":999,"reason":"test cancellation"}})
+    )
+    .unwrap();
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"jsonrpc":"2.0","id":7,"method":"ping"})
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    let after_cancel = stdout.read(&mut child);
+    assert_eq!(
+        after_cancel,
+        serde_json::json!({"jsonrpc":"2.0","id":7,"result":{}})
+    );
+
     drop(stdin);
     wait_for_exit(&mut child, Duration::from_secs(5), Some(&mut stdout));
     let output = child.wait_with_output().unwrap();
@@ -105,6 +182,24 @@ fn oversized_input_fails_closed_without_reflecting_hostile_content() {
     assert!(!stderr.contains(hostile));
     assert!(stdout.is_empty());
     assert_eq!(stderr, "psst-mcp: protocol session failed\n");
+}
+
+#[test]
+fn malformed_json_fails_closed_with_protocol_pure_stdout() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_psst-mcp"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(b"{not-json}\n").unwrap();
+    drop(stdin);
+    wait_for_exit(&mut child, Duration::from_secs(5), None);
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(70));
+    assert!(output.stdout.is_empty());
+    assert_eq!(output.stderr, b"psst-mcp: protocol session failed\n");
 }
 
 #[test]
