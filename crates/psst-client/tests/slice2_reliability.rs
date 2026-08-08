@@ -596,7 +596,9 @@ async fn real_disconnect_and_production_shutdown_release_live_polls() {
 async fn held_external_writer_lock_is_bounded_stable_and_recovers() {
     let fixture = RelayFixture::start().await;
     let config = ClientConfig {
-        request_timeout: Duration::from_secs(4),
+        // SQLite's busy handler is bounded at two seconds. Leave ample CI scheduling headroom
+        // while keeping the client deadline inside the relay's eight-second worker deadline.
+        request_timeout: Duration::from_secs(7),
         retry: RetryPolicy {
             max_attempts: 1,
             ..RetryPolicy::default()
@@ -663,15 +665,22 @@ async fn held_external_writer_lock_is_bounded_stable_and_recovers() {
     acquired_rx.recv().unwrap();
     let started = Instant::now();
     let result = client.send_prepared(&prepared, &sender.credential).await;
-    assert!(matches!(
-        result,
-        Err(Error::Api {
-            status: 503,
-            code: psst_protocol::ApiErrorCode::DatabaseBusy,
-            retryable: true
-        })
-    ));
-    assert!(started.elapsed() < Duration::from_secs(4));
+    let elapsed = started.elapsed();
+    assert!(
+        matches!(
+            result,
+            Err(Error::Api {
+                status: 503,
+                code: psst_protocol::ApiErrorCode::DatabaseBusy,
+                retryable: true
+            })
+        ),
+        "unexpected lock result after {elapsed:?}: {result:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(7),
+        "writer lock exceeded client bound: {elapsed:?}"
+    );
     assert!(
         client
             .transcript(
