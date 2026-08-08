@@ -1,6 +1,6 @@
 # W-208: Cross-platform development artifacts
 
-Status: active
+Status: verified
 
 ## Objective
 
@@ -48,4 +48,7 @@ Do not create signed tags, GitHub Releases, installers, package-manager entries,
 
 ## Verification evidence
 
-Pending.
+- Revision `c3340fe` independently approved; all 162 tests, formatting, strict Clippy, workflow syntax, packaging inspection, and local Windows extraction/startup smoke passed.
+- Native development builds passed on Windows x86-64, Linux x86-64, and macOS ARM64: <https://github.com/spatial-bit/psst/actions/runs/31238500451>.
+- Trusted upload plus fresh no-checkout/no-Rust download/extraction/startup rehearsal passed on all three platforms: <https://github.com/spatial-bit/psst/actions/runs/31238613310>.
+- Three unreleased revision-stamped relay archives are retained for 14 days; exact IDs and limitations are in `EVIDENCE/W-208-development-artifacts.md`.

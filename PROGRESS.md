@@ -34,14 +34,17 @@ Last reconciled: 2026-08-07
 - W-206 revision `f1db97c` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31235067734>.
 - W-207 Slice 2 reliability gate independently approved with 162 passing tests, 100 production TCP watchers, exact restart reconciliation, bounded disconnect/shutdown/lock recovery, and repeated release performance above 100 messages/second with p95 below 100 ms.
 - W-207 revision `9bded29` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31237113554>.
+- W-208 native development artifacts independently approved: revision-stamped relay-only archives, exact inventory/path scanning, bundled-SQLite inspection, native startup smoke, and clean downloaded rehearsal without Rust.
+- W-208 revision `c3340fe` passed standard CI and native artifact builds on Windows x86-64, Linux x86-64, and macOS ARM64: <https://github.com/spatial-bit/psst/actions/runs/31238500463> and <https://github.com/spatial-bit/psst/actions/runs/31238500451>.
+- Trusted upload and clean-download rehearsal retained three 14-day dogfood artifacts and passed on all three native platforms: <https://github.com/spatial-bit/psst/actions/runs/31238613310>.
 
 ## Active
 
-- W-208 cross-platform development artifacts.
+- Slice 2 complete; draft PR ready for final merge review.
 
 ## Ready
 
-- Slice 3 CLI and cooperative MCP work is ready after W-208.
+- Slice 3 CLI and cooperative MCP work is ready after Slice 2 merge.
 
 ## Gate evidence
 
@@ -52,4 +55,4 @@ Last reconciled: 2026-08-07
 
 ## Next coordinator action
 
-Produce W-208 cross-platform development artifacts and verify clean local relay startup/installability before closing Slice 2.
+Perform final Slice 2 PR review, merge the green draft PR, then decompose and begin Slice 3 CLI/cooperative MCP work.
