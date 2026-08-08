@@ -311,7 +311,7 @@ impl CredentialStore {
                 Err(error) if error == rustix::io::Errno::NOENT => {}
                 Err(error) => return Err(io::Error::from(error)),
             }
-            return Ok(());
+            Ok(())
         }
         #[cfg(windows)]
         {
@@ -381,9 +381,10 @@ fn open_directory_guard(path: &Path) -> io::Result<fs::File> {
     return psst_platform_security::open_pinned_directory(path);
     #[cfg(unix)]
     {
+        use std::os::unix::fs::OpenOptionsExt;
+
         let mut options = fs::OpenOptions::new();
         options.read(true);
-        use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
         options.open(path)
     }
@@ -409,21 +410,15 @@ fn canonical_origin(raw: &str) -> io::Result<String> {
     Ok(value.to_string().trim_end_matches('/').to_owned())
 }
 
+#[cfg(windows)]
 fn open_existing_secure(path: &Path) -> io::Result<fs::File> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
-    }
-    #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
         options.share_mode(1 | 2).custom_flags(0x0020_0000);
     }
     let file = options.open(path)?;
-    #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
         if file.metadata()?.file_attributes() & 0x400 != 0 {
@@ -466,7 +461,7 @@ fn reject_substitution(path: &Path) -> io::Result<()> {
 #[cfg(unix)]
 fn verify_restricted_handle(file: &fs::File) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    if file.metadata()?.permissions().mode() & 0o077 == 0 {
+    if file.metadata()?.permissions().mode() % 0o1000 == 0o600 {
         Ok(())
     } else {
         Err(io::Error::new(
