@@ -16,6 +16,15 @@ on:
       decision:
         description: Type APPROVE-ALPHA-ASSETS after independent review
         required: true
+      final_ci_run_id:
+        description: Successful final three-OS cooperative CI run ID
+        required: true
+      standard_ci_run_id:
+        description: Successful final standard CI run ID
+        required: true
+      proof_run_id:
+        description: Successful protected proof-retention run ID at the exact revision
+        required: true
 
 permissions:
   actions: read
@@ -33,11 +42,17 @@ jobs:
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           EXPECTED_REVISION: ${{ inputs.revision }}
           EXPECTED_TAG: ${{ inputs.tag }}
+          FINAL_CI_RUN_ID: ${{ inputs.final_ci_run_id }}
+          STANDARD_CI_RUN_ID: ${{ inputs.standard_ci_run_id }}
+          PROOF_RUN_ID: ${{ inputs.proof_run_id }}
         run: |
           test "$DECISION" = 'APPROVE-ALPHA-ASSETS'
           [[ "$CANDIDATE_RUN_ID" =~ ^[0-9]+$ ]]
           [[ "$EXPECTED_REVISION" =~ ^[0-9a-f]{40}$ ]]
           test "$EXPECTED_TAG" = 'v0.1.0-alpha.1'
+          [[ "$FINAL_CI_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$STANDARD_CI_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$PROOF_RUN_ID" =~ ^[0-9]+$ ]]
       - name: Verify candidate workflow run provenance
         env:
           GH_TOKEN: ${{ github.token }}
@@ -51,6 +66,46 @@ jobs:
           test "$(gh api "repos/$REPOSITORY/actions/workflows/$workflow_id" --jq .path)" = '.github/workflows/release-candidate.yml'
           test "$(gh api "repos/$REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" --jq .conclusion)" = 'success'
           test "$(gh api "repos/$REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" --jq .head_sha)" = "$EXPECTED_REVISION"
+      - name: Verify final cooperative CI provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FINAL_CI_RUN_ID: ${{ inputs.final_ci_run_id }}
+          EXPECTED_REVISION: ${{ inputs.revision }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          workflow_id="$(gh api "repos/$REPOSITORY/actions/runs/$FINAL_CI_RUN_ID" --jq .workflow_id)"
+          [[ "$workflow_id" =~ ^[0-9]+$ ]]
+          test "$(gh api "repos/$REPOSITORY/actions/workflows/$workflow_id" --jq .path)" = '.github/workflows/development-artifacts.yml'
+          test "$(gh api "repos/$REPOSITORY/actions/runs/$FINAL_CI_RUN_ID" --jq .conclusion)" = 'success'
+          test "$(gh api "repos/$REPOSITORY/actions/runs/$FINAL_CI_RUN_ID" --jq .head_sha)" = "$EXPECTED_REVISION"
+      - name: Verify final standard CI provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STANDARD_CI_RUN_ID: ${{ inputs.standard_ci_run_id }}
+          EXPECTED_REVISION: ${{ inputs.revision }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          workflow_id="$(gh api "repos/$REPOSITORY/actions/runs/$STANDARD_CI_RUN_ID" --jq .workflow_id)"
+          [[ "$workflow_id" =~ ^[0-9]+$ ]]
+          test "$(gh api "repos/$REPOSITORY/actions/workflows/$workflow_id" --jq .path)" = '.github/workflows/ci.yml'
+          test "$(gh api "repos/$REPOSITORY/actions/runs/$STANDARD_CI_RUN_ID" --jq .conclusion)" = 'success'
+          test "$(gh api "repos/$REPOSITORY/actions/runs/$STANDARD_CI_RUN_ID" --jq .head_sha)" = "$EXPECTED_REVISION"
+      - name: Verify and download protected exact-revision proof retention
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          EXPECTED_REVISION: ${{ inputs.revision }}
+          PROOF_RUN_ID: ${{ inputs.proof_run_id }}
+        shell: bash
+        run: |
+          workflow_id="$(gh api "repos/$REPOSITORY/actions/runs/$PROOF_RUN_ID" --jq .workflow_id)"
+          [[ "$workflow_id" =~ ^[0-9]+$ ]]
+          test "$(gh api "repos/$REPOSITORY/actions/workflows/$workflow_id" --jq .path)" = '.github/workflows/release-proof-retention.yml'
+          test "$(gh api "repos/$REPOSITORY/actions/runs/$PROOF_RUN_ID" --jq .conclusion)" = 'success'
+          test "$(gh api "repos/$REPOSITORY/actions/runs/$PROOF_RUN_ID" --jq .head_sha)" = "$EXPECTED_REVISION"
+          gh run download "$PROOF_RUN_ID" --repo "$REPOSITORY" --name "alpha-release-proofs-$EXPECTED_REVISION" --dir reviewed-proofs
       - name: Download immutable candidate evidence
         env:
           GH_TOKEN: ${{ github.token }}
@@ -66,8 +121,11 @@ jobs:
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           REQUESTER: ${{ github.actor }}
           ATTESTATION_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FINAL_CI_RUN_ID: ${{ inputs.final_ci_run_id }}
+          STANDARD_CI_RUN_ID: ${{ inputs.standard_ci_run_id }}
+          PROOF_RUN_ID: ${{ inputs.proof_run_id }}
         run: |
-          test -f candidate/SHA256SUMS && test -f candidate/RELEASE-EVIDENCE.json
+          test -f candidate/SHA256SUMS && test -f candidate/RELEASE-EVIDENCE.json && test -f candidate/RELEASE-NOTES.md && test -f candidate/verify-published-release.py
           python - <<'PY'
           import hashlib,json,os
           from pathlib import Path
@@ -82,13 +140,29 @@ jobs:
           assert set(parsed)==expected_names and len(lines)==3
           for name,path in archives.items(): assert hashlib.sha256(path.read_bytes()).hexdigest()==parsed[name]
           evidence_bytes=Path('candidate/RELEASE-EVIDENCE.json').read_bytes()
-          attestation={'schema':'psst.release-review-attestation.v1','decision':'approved','requester':os.environ['REQUESTER'],'protected_environment':'alpha-release-review','deployment_approval_audit':os.environ['ATTESTATION_RUN_URL'],'tag':os.environ['EXPECTED_TAG'],'revision':os.environ['EXPECTED_REVISION'],'candidate_run_id':os.environ['CANDIDATE_RUN_ID'],'release_evidence_sha256':hashlib.sha256(evidence_bytes).hexdigest(),'sha256sums_sha256':hashlib.sha256(sums).hexdigest(),'sha256sums':lines,'attestation_run':os.environ['ATTESTATION_RUN_URL']}
+          notes=Path('candidate/RELEASE-NOTES.md').read_bytes()
+          verifier=Path('candidate/verify-published-release.py').read_bytes()
+          live=Path('reviewed-proofs/LIVE-PROOF').read_bytes()
+          lan=Path('reviewed-proofs/LAN-PROOF').read_bytes()
+          proof_metadata=json.loads(Path('reviewed-proofs/PROOF-METADATA.json').read_text())
+          assert proof_metadata['schema']=='psst.release-proofs.v1' and proof_metadata['revision']==os.environ['EXPECTED_REVISION']
+          assert proof_metadata['proof_run'].endswith('/actions/runs/'+os.environ['PROOF_RUN_ID'])
+          live_meta=proof_metadata['proofs']['live']; lan_meta=proof_metadata['proofs']['isolated_lan']
+          assert live_meta=={'file':'LIVE-PROOF','sha256':hashlib.sha256(live).hexdigest(),'bytes':len(live),'schema':'psst.live-cooperative-proof.v1','forbidden_canary_sha256':hashlib.sha256(b'w309-authorization-canary-must-not-ship').hexdigest()}
+          assert lan_meta=={'file':'LAN-PROOF','sha256':hashlib.sha256(lan).hexdigest(),'bytes':len(lan),'schema':'psst.isolated-lan-proof.v1','forbidden_canary_sha256':hashlib.sha256(b'w503-lan-authorization-canary-must-not-retain').hexdigest()}
+          attestation={'schema':'psst.release-review-attestation.v1','decision':'approved','requester':os.environ['REQUESTER'],'protected_environment':'alpha-release-review','deployment_approval_audit':os.environ['ATTESTATION_RUN_URL'],'tag':os.environ['EXPECTED_TAG'],'revision':os.environ['EXPECTED_REVISION'],'candidate_run_id':os.environ['CANDIDATE_RUN_ID'],'final_ci_run_id':os.environ['FINAL_CI_RUN_ID'],'standard_ci_run_id':os.environ['STANDARD_CI_RUN_ID'],'proof_run_id':os.environ['PROOF_RUN_ID'],'release_evidence_sha256':hashlib.sha256(evidence_bytes).hexdigest(),'release_notes_sha256':hashlib.sha256(notes).hexdigest(),'post_download_verifier_sha256':hashlib.sha256(verifier).hexdigest(),'sha256sums_sha256':hashlib.sha256(sums).hexdigest(),'sha256sums':lines,'proof_metadata_sha256':hashlib.sha256(Path('reviewed-proofs/PROOF-METADATA.json').read_bytes()).hexdigest(),'live_proof_sha256':hashlib.sha256(live).hexdigest(),'isolated_lan_proof_sha256':hashlib.sha256(lan).hexdigest(),'attestation_run':os.environ['ATTESTATION_RUN_URL']}
           Path('REVIEWER-ATTESTATION.json').write_text(json.dumps(attestation,indent=2,sort_keys=True)+'\n')
+          Path('RELEASE-NOTES.md').write_bytes(notes)
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: alpha-reviewer-attestation-${{ inputs.revision }}
-          path: REVIEWER-ATTESTATION.json
+          path: |
+            REVIEWER-ATTESTATION.json
+            RELEASE-NOTES.md
+            reviewed-proofs/LIVE-PROOF
+            reviewed-proofs/LAN-PROOF
+            reviewed-proofs/PROOF-METADATA.json
           if-no-files-found: error
           retention-days: 30
 

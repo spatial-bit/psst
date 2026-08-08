@@ -28,6 +28,9 @@ Independently validate the complete cooperative CLI/MCP slice through automated 
   the exact required 40-hex source revision, and binary version. It proves each generated
   authorization exists only in its credential record before cleanup and scans observable evidence
   for all generated authorizations, an environment canary, and both message bodies.
+- The live-proof retention contract binds its sanitizer declaration to the same fixed harness canary,
+  `w309-authorization-canary-must-not-ship`, by SHA-256 and rejects the literal canary or credential
+  keys in the retained sanitized JSON.
 - The native Windows release binaries passed the complete harness repeatedly (39.8, 38.9, 39.0,
   40.8, and 40.8 seconds across implementation and repair boundaries). Independent adversarial
   review approved the final process cleanup, revision binding, credential confinement, and evidence

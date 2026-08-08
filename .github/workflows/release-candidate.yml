@@ -228,6 +228,10 @@ jobs:
     needs: [contract, clean-download]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.contract.outputs.revision }}
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: alpha-candidate-*
@@ -245,6 +249,10 @@ jobs:
           source=f'${{ github.server_url }}/${{ github.repository }}/blob/{revision}/'
           evidence={'schema':'psst.release-evidence.v1','version':os.environ['PSST_RELEASE_VERSION'],'tag':os.environ['PSST_RELEASE_TAG'],'revision':revision,'workflow_run':'${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}','platforms':['windows-x86_64','linux-x86_64','macos-aarch64'],'requirements':{'PRD-17-asset-rehearsal':'clean-download local journey passed for candidate assets','PRD-18-portable-assets':'W-502 and SHA256SUMS','PRD-19-alpha-documentation':'docs/install-uninstall.md and self-contained archive docs','W-309-automated-native-gate':'EXTERNAL PREREQUISITE - SEE W-309 EVIDENCE/CI; NOT ESTABLISHED HERE','W-309-live-Claude-Codex':'EXTERNAL PREREQUISITE - NOT ESTABLISHED BY THIS WORKFLOW','W-309-final-three-OS-CI':'EXTERNAL PREREQUISITE - NOT ESTABLISHED BY THIS WORKFLOW','W-503-isolated-trusted-LAN':'OWNER-CONTROLLED EXTERNAL PREREQUISITE - HOSTED CI DOES NOT BIND NON-LOOPBACK'},'migration_compatibility':source+'WORK/W-102-sqlite-foundation-migrations.md','fault_injection_and_reliability':[source+'WORK/W-107-slice-1-reliability-gate.md',source+'WORK/W-207-slice-2-reliability-gate.md',source+'WORK/W-309-slice-3-cooperative-gate.md'],'artifact_hashes':'SHA256SUMS','sbom':'SBOM.spdx.json inside each archive','rehearsal':'native clean-download local jobs in this workflow run','limitations':['trusted LAN only','no TLS','no Slice 4 activation','no installer or package manager'],'approval':'PENDING INDEPENDENT REVIEWER ATTESTATION'}
           Path('RELEASE-EVIDENCE.json').write_text(json.dumps(evidence,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+          notes=Path('docs/release-notes-v0.1.0-alpha.1.md').read_text(encoding='utf-8')
+          notes += f'''\n\n## Candidate verification\n\n- Revision: `{revision}`\n- Signed tag: `{os.environ['PSST_RELEASE_TAG']}`\n- Candidate workflow: [run ${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\n- Approved asset hashes: included as `SHA256SUMS` in the retained candidate evidence bundle.\n\nPublication still requires the separately protected reviewer attestation, live Claude/Codex proof,\nisolated trusted-LAN proof, and explicit owner authorization.\n'''
+          Path('RELEASE-NOTES.md').write_text(notes,encoding='utf-8')
+          Path('verify-published-release.py').write_bytes(Path('scripts/verify-published-release.py').read_bytes())
           PY
           ! grep -aEi '(authorization|resume[_ -]?token|session[_ -]?credential)' RELEASE-EVIDENCE.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -254,6 +262,8 @@ jobs:
             assets/*
             SHA256SUMS
             RELEASE-EVIDENCE.json
+            RELEASE-NOTES.md
+            verify-published-release.py
           if-no-files-found: error
           retention-days: 30
 

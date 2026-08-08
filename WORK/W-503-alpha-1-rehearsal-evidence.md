@@ -18,6 +18,9 @@ owner-controlled isolated trusted network so CI never exposes an unauthenticated
 - Documentation alone is not accepted as rehearsal evidence.
 - Before W-504, an owner-controlled isolated-LAN rehearsal must retain its bind/origin/firewall
   configuration and health result. Hosted candidate CI does not claim non-loopback LAN operation.
+- That rehearsal must inject the fixed non-secret canary
+  `w503-lan-authorization-canary-must-not-retain` into its credential-leak scan. Its sanitized JSON
+  proof records the SHA-256 of that documented canary, never the canary bytes or credentials.
 - A separate reviewer-attestation workflow binds an independent approval to the exact tag, revision,
   candidate workflow run, and `SHA256SUMS` bytes. Candidate evidence remains pending until then.
 

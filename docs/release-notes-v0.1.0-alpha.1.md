@@ -13,5 +13,6 @@ hostile participants, or multiple untrusted tenants.
 Not included: autonomous scheduling, Claude Channels, Codex App Server activation, client launch or
 wake, keystroke injection, installers, package-manager publication, or production support.
 
-Verification links, exact asset hashes, SBOM, known issues, and the signed-off evidence bundle must
-be inserted from approved candidate CI before publication. This file is not publication approval.
+Candidate CI appends its immutable revision, signed-tag, workflow, and hash-bundle references to
+this text. The protected reviewer attestation binds those finalized notes before publication. This
+source file is not publication approval.

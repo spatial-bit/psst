@@ -1,0 +1,65 @@
+name: Retain alpha live and LAN proofs
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Exact 40-hex candidate revision (dispatch this workflow at that tag/ref)
+        required: true
+      live_proof_base64:
+        description: Base64-encoded sanitized Claude/Codex proof (maximum 20 KiB decoded)
+        required: true
+      live_proof_sha256:
+        description: SHA-256 of decoded sanitized Claude/Codex proof
+        required: true
+      lan_proof_base64:
+        description: Base64-encoded sanitized isolated trusted-LAN proof (maximum 20 KiB decoded)
+        required: true
+      lan_proof_sha256:
+        description: SHA-256 of decoded sanitized isolated trusted-LAN proof
+        required: true
+      decision:
+        description: Type RETAIN-SANITIZED-ALPHA-PROOFS
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  retain:
+    environment: alpha-release-proof-retention
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+      - name: Decode, bound, sanitize, and bind proof bytes
+        shell: bash
+        env:
+          REVISION: ${{ inputs.revision }}
+          WORKFLOW_REVISION: ${{ github.sha }}
+          LIVE_PROOF_BASE64: ${{ inputs.live_proof_base64 }}
+          LIVE_PROOF_SHA256: ${{ inputs.live_proof_sha256 }}
+          LAN_PROOF_BASE64: ${{ inputs.lan_proof_base64 }}
+          LAN_PROOF_SHA256: ${{ inputs.lan_proof_sha256 }}
+          DECISION: ${{ inputs.decision }}
+          PROOF_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
+          test "$WORKFLOW_REVISION" = "$REVISION"
+          [[ "$LIVE_PROOF_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$LAN_PROOF_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          test "$DECISION" = 'RETAIN-SANITIZED-ALPHA-PROOFS'
+          python scripts/retain-release-proofs.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: alpha-release-proofs-${{ inputs.revision }}
+          path: proofs/*
+          if-no-files-found: error
+          retention-days: 30
+
+# Dispatch at the immutable candidate tag/ref. Configure alpha-release-proof-retention with required
+# reviewers and Prevent self-review. This workflow only retains bounded sanitized evidence; it does
+# not build, tag, attest, or publish. Two 20-KiB decoded maxima fit within GitHub's total dispatch
+# input-payload limit after base64 expansion and the remaining bounded fields.

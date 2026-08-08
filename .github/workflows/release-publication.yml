@@ -1,0 +1,159 @@
+name: Publish approved alpha release
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Approved successful Alpha release candidate run ID
+        required: true
+      attestation_run_id:
+        description: Approved successful reviewer-attestation run ID
+        required: true
+      final_ci_run_id:
+        description: Final successful three-OS cooperative CI run ID bound by the attestation
+        required: true
+      standard_ci_run_id:
+        description: Final successful standard CI run ID bound by the attestation
+        required: true
+      proof_run_id:
+        description: Protected exact-revision live/LAN proof-retention run ID
+        required: true
+      revision:
+        description: Exact approved 40-hex release revision
+        required: true
+      authorization:
+        description: Type PUBLISH v0.1.0-alpha.1 followed by one space and the exact revision
+        required: true
+      limitations_confirmation:
+        description: Type TRUSTED-LAN-ALPHA-NO-TLS-NO-PRODUCTION-SUPPORT
+        required: true
+
+permissions: {}
+
+jobs:
+  publish:
+    environment: alpha-release-publish
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Validate explicit owner authorization
+        shell: bash
+        env:
+          REVISION: ${{ inputs.revision }}
+          AUTHORIZATION: ${{ inputs.authorization }}
+          LIMITATIONS_CONFIRMATION: ${{ inputs.limitations_confirmation }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          ATTESTATION_RUN_ID: ${{ inputs.attestation_run_id }}
+          FINAL_CI_RUN_ID: ${{ inputs.final_ci_run_id }}
+          STANDARD_CI_RUN_ID: ${{ inputs.standard_ci_run_id }}
+          PROOF_RUN_ID: ${{ inputs.proof_run_id }}
+        run: |
+          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CANDIDATE_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$ATTESTATION_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$FINAL_CI_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$STANDARD_CI_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$PROOF_RUN_ID" =~ ^[0-9]+$ ]]
+          test "$AUTHORIZATION" = "PUBLISH v0.1.0-alpha.1 $REVISION"
+          test "$LIMITATIONS_CONFIRMATION" = 'TRUSTED-LAN-ALPHA-NO-TLS-NO-PRODUCTION-SUPPORT'
+      - name: Verify workflow, revision, and signed annotated tag provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REVISION: ${{ inputs.revision }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          ATTESTATION_RUN_ID: ${{ inputs.attestation_run_id }}
+          FINAL_CI_RUN_ID: ${{ inputs.final_ci_run_id }}
+          STANDARD_CI_RUN_ID: ${{ inputs.standard_ci_run_id }}
+          PROOF_RUN_ID: ${{ inputs.proof_run_id }}
+        run: |
+          candidate_workflow="$(gh api "repos/$REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" --jq .workflow_id)"
+          attestation_workflow="$(gh api "repos/$REPOSITORY/actions/runs/$ATTESTATION_RUN_ID" --jq .workflow_id)"
+          final_ci_workflow="$(gh api "repos/$REPOSITORY/actions/runs/$FINAL_CI_RUN_ID" --jq .workflow_id)"
+          standard_ci_workflow="$(gh api "repos/$REPOSITORY/actions/runs/$STANDARD_CI_RUN_ID" --jq .workflow_id)"
+          proof_workflow="$(gh api "repos/$REPOSITORY/actions/runs/$PROOF_RUN_ID" --jq .workflow_id)"
+          test "$(gh api "repos/$REPOSITORY/actions/workflows/$candidate_workflow" --jq .path)" = '.github/workflows/release-candidate.yml'
+          test "$(gh api "repos/$REPOSITORY/actions/workflows/$attestation_workflow" --jq .path)" = '.github/workflows/release-attestation.yml'
+          test "$(gh api "repos/$REPOSITORY/actions/workflows/$final_ci_workflow" --jq .path)" = '.github/workflows/development-artifacts.yml'
+          test "$(gh api "repos/$REPOSITORY/actions/workflows/$standard_ci_workflow" --jq .path)" = '.github/workflows/ci.yml'
+          test "$(gh api "repos/$REPOSITORY/actions/workflows/$proof_workflow" --jq .path)" = '.github/workflows/release-proof-retention.yml'
+          for run_id in "$CANDIDATE_RUN_ID" "$ATTESTATION_RUN_ID" "$FINAL_CI_RUN_ID" "$STANDARD_CI_RUN_ID" "$PROOF_RUN_ID"; do
+            test "$(gh api "repos/$REPOSITORY/actions/runs/$run_id" --jq .conclusion)" = success
+            test "$(gh api "repos/$REPOSITORY/actions/runs/$run_id" --jq .head_sha)" = "$REVISION"
+          done
+          tag_object="$(gh api "repos/$REPOSITORY/git/ref/tags/v0.1.0-alpha.1" --jq .object.sha)"
+          test "$(gh api "repos/$REPOSITORY/git/ref/tags/v0.1.0-alpha.1" --jq .object.type)" = tag
+          test "$(gh api "repos/$REPOSITORY/git/tags/$tag_object" --jq .object.type)" = commit
+          test "$(gh api "repos/$REPOSITORY/git/tags/$tag_object" --jq .object.sha)" = "$REVISION"
+          test "$(gh api "repos/$REPOSITORY/git/tags/$tag_object" --jq .verification.verified)" = true
+          if gh release view v0.1.0-alpha.1 --repo "$REPOSITORY" >/dev/null 2>&1; then
+            echo 'release already exists; refusing to mutate it' >&2
+            exit 1
+          fi
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+      - name: Download exact retained candidate and approval artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REVISION: ${{ inputs.revision }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          ATTESTATION_RUN_ID: ${{ inputs.attestation_run_id }}
+        run: |
+          gh run download "$CANDIDATE_RUN_ID" --repo "$REPOSITORY" --name "alpha-release-evidence-$REVISION" --dir candidate
+          gh run download "$ATTESTATION_RUN_ID" --repo "$REPOSITORY" --name "alpha-reviewer-attestation-$REVISION" --dir review
+      - name: Validate approved assets, notes, evidence, and proof bindings
+        shell: bash
+        env:
+          REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
+          REVISION: ${{ inputs.revision }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          ATTESTATION_RUN_ID: ${{ inputs.attestation_run_id }}
+          FINAL_CI_RUN_ID: ${{ inputs.final_ci_run_id }}
+          STANDARD_CI_RUN_ID: ${{ inputs.standard_ci_run_id }}
+          PROOF_RUN_ID: ${{ inputs.proof_run_id }}
+        run: |
+          python scripts/validate-release-publication.py \
+            --candidate candidate --review review --repository-url "$REPOSITORY_URL" \
+            --revision "$REVISION" --candidate-run-id "$CANDIDATE_RUN_ID" \
+            --attestation-run-id "$ATTESTATION_RUN_ID" --final-ci-run-id "$FINAL_CI_RUN_ID" \
+            --standard-ci-run-id "$STANDARD_CI_RUN_ID" --proof-run-id "$PROOF_RUN_ID"
+      - name: Publish immutable archives as a GitHub prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh release create v0.1.0-alpha.1 \
+            candidate/psst-v0.1.0-alpha.1-windows-x86_64.zip \
+            candidate/psst-v0.1.0-alpha.1-linux-x86_64.tar.gz \
+            candidate/psst-v0.1.0-alpha.1-macos-aarch64.tar.gz \
+            candidate/SHA256SUMS candidate/RELEASE-EVIDENCE.json \
+            review/REVIEWER-ATTESTATION.json candidate/verify-published-release.py \
+            review/reviewed-proofs/LIVE-PROOF review/reviewed-proofs/LAN-PROOF \
+            review/reviewed-proofs/PROOF-METADATA.json \
+            --repo "$REPOSITORY" --verify-tag --prerelease \
+            --title 'Psst v0.1.0-alpha.1' --notes-file review/RELEASE-NOTES.md
+      - name: Download publication and verify exact approved archive hashes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          mkdir published
+          gh release download v0.1.0-alpha.1 --repo "$REPOSITORY" --dir published \
+            --pattern '*.zip' --pattern '*.tar.gz' --pattern 'LIVE-PROOF' \
+            --pattern 'LAN-PROOF' --pattern 'PROOF-METADATA.json'
+          python candidate/verify-published-release.py --directory published --attestation review/REVIEWER-ATTESTATION.json
+          test "$(gh api "repos/$REPOSITORY/releases/tags/v0.1.0-alpha.1" --jq .prerelease)" = true
+          test "$(gh api "repos/$REPOSITORY/releases/tags/v0.1.0-alpha.1" --jq .draft)" = false
+
+# Configure alpha-release-publish with required owner reviewers and Prevent self-review. This
+# workflow never builds, tags, signs, overwrites, or republishes; failed post-download verification
+# leaves a visible failed run and must be handled as a release incident.

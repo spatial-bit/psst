@@ -34,3 +34,36 @@ exact three archive hashes, and binds approval to the candidate run, revision, e
 hash-file digest.
 Publication requires a second explicit owner authorization and must verify downloaded Release asset
 hashes against that attestation after upload.
+
+The reviewer-attestation dispatch also requires exact successful runs for both standard
+Windows/Linux/macOS CI (`ci.yml`) and cooperative native/checkoutless CI
+(`development-artifacts.yml`). Live Claude/Codex and isolated trusted-LAN evidence is necessarily
+produced after running the immutable candidate, so it is not committed back to that revision.
+Instead, dispatch **Retain alpha live and LAN proofs** at the candidate tag/ref. Its protected
+environment accepts two schema- and revision-bound sanitized JSON proofs (each at most 20 KiB
+decoded), recomputes their declared hashes, verifies hashes of the documented W-309 and W-503
+rehearsal canaries, recursively rejects credential keys (including quoted JSON keys), scans the
+bounded bytes for literal canaries and credential-like material, and
+uploads proof bytes plus metadata bound to the workflow's exact head SHA. The combined base64 inputs
+fit within GitHub's dispatch payload limit. The reviewer attestation requires that successful exact-
+revision proof run, downloads the immutable artifact, and independently recomputes both hashes. It
+also copies and hashes the candidate-generated `RELEASE-NOTES.md`; publication cannot replace notes.
+
+Configure a second GitHub environment, `alpha-release-publish`, with required owner reviewers and
+Prevent self-review. Dispatch **Publish approved alpha release** with the exact candidate,
+attestation, proof-retention, standard-CI, cooperative-CI run IDs and revision. Authorization is deliberately revision-specific:
+`PUBLISH v0.1.0-alpha.1 <40-hex-revision>`, plus the exact limitations confirmation shown by the
+workflow. The single protected job independently verifies both CI run provenances and the protected
+proof-retention run provenance, recomputes the attested live/LAN proof bytes, downloads retained artifacts, does
+not build, refuses an existing Release, and grants `contents: write` only for prerelease creation. It publishes the fixed three
+archives plus their checksum/evidence/attestation/verifier files, all three sanitized proof files,
+and the attested finalized notes. It then downloads the published archives and proof files and runs
+the attestation-bound exact-inventory/hash verifier. Proof evidence therefore remains available after
+Actions artifact retention expires.
+Any failure after Release creation must be treated as a release incident and investigated; do not
+delete or replace assets merely to make the workflow green.
+
+The candidate workflow's pinned signer fingerprint check is the authority for the tag signer. The
+publication workflow preserves that trust chain by requiring the exact successful candidate run,
+fixed signed annotated tag, and revision; GitHub's tag verification result is an additional check,
+not a replacement for the pinned-signer validation.
