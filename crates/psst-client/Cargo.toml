@@ -11,6 +11,7 @@ repository.workspace = true
 getrandom.workspace = true
 http.workspace = true
 psst-protocol = { path = "../psst-protocol" }
+psst-core = { path = "../psst-core" }
 psst-platform-security = { path = "../psst-platform-security" }
 reqwest.workspace = true
 serde.workspace = true

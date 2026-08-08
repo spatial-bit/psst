@@ -14,6 +14,7 @@ use std::{
 };
 
 const PROFILE_VERSION: u32 = 1;
+pub const MAX_PROFILE_BYTES: u64 = 16 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -21,6 +22,7 @@ pub struct ProfileBinding {
     version: u32,
     pub profile: String,
     pub relay_origin: String,
+    pub squad_name: String,
     pub squad_id: String,
     pub member_id: String,
 }
@@ -34,21 +36,41 @@ impl ProfileBinding {
     pub fn new(
         profile: String,
         relay_origin: String,
+        squad_name: String,
         squad_id: String,
         member_id: String,
     ) -> Result<Self, ConfigError> {
-        validate_profile_name(&profile)?;
         let relay_origin = canonical_relay_origin(&relay_origin)?;
-        if squad_id.is_empty() || member_id.is_empty() {
-            return Err(ConfigError::Invalid("profile binding"));
-        }
-        Ok(Self {
+        let value = Self {
             version: PROFILE_VERSION,
             profile,
             relay_origin,
+            squad_name,
             squad_id,
             member_id,
-        })
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
+    /// Validates a binding regardless of whether it came from construction or storage.
+    ///
+    /// # Errors
+    /// Rejects unsupported versions, non-canonical origins, and invalid typed identities.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        use psst_core::{MembershipId, SquadId, SquadName};
+        if self.version != PROFILE_VERSION {
+            return Err(ConfigError::Invalid("profile binding version"));
+        }
+        validate_profile_name(&self.profile)?;
+        if canonical_relay_origin(&self.relay_origin)? != self.relay_origin
+            || SquadName::new(&self.squad_name).is_err()
+            || SquadId::new(&self.squad_id).is_err()
+            || MembershipId::new(&self.member_id).is_err()
+        {
+            return Err(ConfigError::Invalid("profile binding"));
+        }
+        Ok(())
     }
 }
 
@@ -178,9 +200,9 @@ pub fn load_profile(path: &Path) -> io::Result<Option<ProfileBinding>> {
         file.share_mode(1 | 2).custom_flags(0x0020_0000);
     }
     #[cfg(windows)]
-    let mut file = file.open(path)?;
+    let file = file.open(path)?;
     #[cfg(unix)]
-    let mut file = File::from(
+    let file = File::from(
         rustix::fs::openat(
             &directory_guard,
             path.file_name().ok_or_else(|| {
@@ -193,23 +215,64 @@ pub fn load_profile(path: &Path) -> io::Result<Option<ProfileBinding>> {
     );
     #[cfg(windows)]
     reject_handle_reparse(&file)?;
+    let length = file.metadata()?.len();
+    if length == 0 || length > MAX_PROFILE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid profile record size",
+        ));
+    }
     let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
+    file.take(MAX_PROFILE_BYTES + 1).read_to_end(&mut bytes)?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_PROFILE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "profile record too large",
+        ));
+    }
     let value: ProfileBinding = serde_json::from_slice(&bytes).map_err(invalid_data)?;
-    if value.version != PROFILE_VERSION {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "unsupported profile record",
-        ));
-    }
-    validate_profile_name(&value.profile).map_err(invalid_data)?;
-    if canonical_relay_origin(&value.relay_origin).map_err(invalid_data)? != value.relay_origin {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "non-canonical profile origin",
-        ));
-    }
+    value.validate().map_err(invalid_data)?;
     Ok(Some(value))
+}
+
+/// Removes non-secret profile metadata after confirmed membership leave.
+///
+/// # Errors
+/// Rejects substituted paths and propagates removal failures.
+pub fn clear_profile(path: &Path) -> io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    reject_symlink(path)?;
+    #[cfg(unix)]
+    {
+        use rustix::fs::{AtFlags, unlinkat};
+        let parent = path.parent().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "profile parent unavailable")
+        })?;
+        let directory = open_directory_guard(parent)?;
+        unlinkat(
+            &directory,
+            path.file_name().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "profile name unavailable")
+            })?,
+            AtFlags::empty(),
+        )
+        .map_err(io::Error::from)?;
+        directory.sync_all()
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        let mut options = OpenOptions::new();
+        options
+            .access_mode(0x8000_0000 | 0x0001_0000)
+            .share_mode(1 | 2)
+            .custom_flags(0x0020_0000);
+        let file = options.open(path)?;
+        reject_handle_reparse(&file)?;
+        psst_platform_security::delete_held_file(&file)
+    }
 }
 
 /// Verifies that a runtime relay override cannot retarget a bound profile.
@@ -229,6 +292,7 @@ pub fn verify_profile_origin(binding: &ProfileBinding, requested: &str) -> Resul
 /// # Errors
 /// Rejects path substitution and propagates durable-write failures.
 pub fn store_profile(path: &Path, binding: &ProfileBinding) -> io::Result<()> {
+    binding.validate().map_err(invalid_data)?;
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "profile parent unavailable"))?;
@@ -407,7 +471,8 @@ mod tests {
         let b = ProfileBinding::new(
             "alpha".into(),
             "HTTP://EXAMPLE.COM:80/".into(),
-            "sq_1".into(),
+            "alpha".into(),
+            "sqd_1".into(),
             "mem_1".into(),
         )
         .unwrap();
@@ -416,6 +481,29 @@ mod tests {
         let text = fs::read_to_string(p).unwrap();
         assert!(!text.to_lowercase().contains("credential"));
         assert!(!text.to_lowercase().contains("token"));
+    }
+    #[test]
+    fn metadata_rejects_zero_oversize_and_invalid_domain_bindings() {
+        let t = tempfile::tempdir().unwrap();
+        let path = t.path().join("profile.json");
+        fs::write(&path, []).unwrap();
+        assert!(load_profile(&path).is_err());
+        fs::write(
+            &path,
+            vec![b'x'; usize::try_from(MAX_PROFILE_BYTES).unwrap() + 1],
+        )
+        .unwrap();
+        assert!(load_profile(&path).is_err());
+        assert!(
+            ProfileBinding::new(
+                "alpha".into(),
+                "http://127.0.0.1:7341".into(),
+                "Not-Canonical".into(),
+                "sqd_ok".into(),
+                "mem_ok".into(),
+            )
+            .is_err()
+        );
     }
     #[test]
     fn pathname_replacement_cannot_create_a_second_owner() {
@@ -455,5 +543,28 @@ mod tests {
         symlink(&target, &link).unwrap();
         assert!(load_profile(&link).is_err());
         assert!(ProfileLock::acquire(&link).is_err());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn metadata_delete_handle_blocks_replacement_until_exact_object_is_removed() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let path = t.path().join("profile.json");
+        let replacement = t.path().join("replacement.json");
+        fs::write(&path, b"original").unwrap();
+        fs::write(&replacement, b"replacement").unwrap();
+        let mut options = OpenOptions::new();
+        options
+            .access_mode(0x8000_0000 | 0x0001_0000)
+            .share_mode(1 | 2)
+            .custom_flags(0x0020_0000);
+        let held = options.open(&path).unwrap();
+        reject_handle_reparse(&held).unwrap();
+        assert!(fs::rename(&replacement, &path).is_err());
+        assert!(fs::remove_file(&path).is_err());
+        psst_platform_security::delete_held_file(&held).unwrap();
+        drop(held);
+        assert!(!path.exists());
+        assert_eq!(fs::read(&replacement).unwrap(), b"replacement");
     }
 }

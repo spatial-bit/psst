@@ -262,6 +262,7 @@ pub fn map_client_error(error: &psst_client::Error) -> LocalErrorCode {
     match error {
         psst_client::Error::InvalidBaseUrl => LocalErrorCode::InvalidOrigin,
         psst_client::Error::InvalidConfiguration => LocalErrorCode::InvalidConfiguration,
+        psst_client::Error::InvalidRequest => LocalErrorCode::InvalidInput,
         psst_client::Error::MalformedCredential | psst_client::Error::MalformedResponse { .. } => {
             LocalErrorCode::RelayProtocol
         }

@@ -23,6 +23,7 @@ tokio.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+psst-platform-security = { path = "../psst-platform-security" }
 
 [lints]
 workspace = true

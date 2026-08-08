@@ -9,6 +9,8 @@ repository.workspace = true
 
 [dependencies]
 psst-client = { path = "../psst-client" }
+psst-core = { path = "../psst-core" }
+psst-platform-security = { path = "../psst-platform-security" }
 psst-protocol = { path = "../psst-protocol" }
 schemars.workspace = true
 serde.workspace = true
@@ -19,10 +21,14 @@ url.workspace = true
 sha2.workspace = true
 libc.workspace = true
 rustix.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+time.workspace = true
 
 [dev-dependencies]
 sha2.workspace = true
 tempfile.workspace = true
+psst-relay = { path = "../psst-relay", features = ["reliability-test-support"] }
 
 [lints]
 workspace = true

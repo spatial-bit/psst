@@ -24,6 +24,7 @@ time = { version = "0.3.41", features = ["formatting", "parsing"] }
 utoipa = { version = "5.4.0", features = ["time"] }
 axum = "0.8.4"
 tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time", "io-util"] }
+tokio-util = "0.7.19"
 tower = { version = "0.5.2", features = ["util", "limit"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }

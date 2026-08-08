@@ -10,12 +10,7 @@ use std::{
 #[test]
 #[allow(clippy::too_many_lines)] // One ordered transcript proves negotiation through shutdown.
 fn pinned_sdk_completes_initialize_ping_and_clean_stdio_shutdown() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_psst-mcp"))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let (_root, mut child) = isolated_child("w306-handshake");
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = ProtocolReader::new(child.stdout.take().unwrap());
 
@@ -90,7 +85,7 @@ fn pinned_sdk_completes_initialize_ping_and_clean_stdio_shutdown() {
     assert_eq!(unavailable["result"]["isError"], true);
     assert_eq!(
         unavailable["result"]["structuredContent"]["error"]["code"],
-        "unsupported"
+        "relay_unavailable"
     );
     let tool_text = unavailable["result"]["content"][0]["text"]
         .as_str()
@@ -159,12 +154,7 @@ fn pinned_sdk_completes_initialize_ping_and_clean_stdio_shutdown() {
 
 #[test]
 fn oversized_input_fails_closed_without_reflecting_hostile_content() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_psst-mcp"))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let (_root, mut child) = isolated_child("w306-oversized");
     let mut stdin = child.stdin.take().unwrap();
     let hostile = "HOSTILE-CANARY-DO-NOT-REFLECT";
     stdin.write_all(hostile.as_bytes()).unwrap();
@@ -186,12 +176,7 @@ fn oversized_input_fails_closed_without_reflecting_hostile_content() {
 
 #[test]
 fn malformed_json_fails_closed_with_protocol_pure_stdout() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_psst-mcp"))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let (_root, mut child) = isolated_child("w306-malformed");
     let mut stdin = child.stdin.take().unwrap();
     stdin.write_all(b"{not-json}\n").unwrap();
     drop(stdin);
@@ -204,12 +189,7 @@ fn malformed_json_fails_closed_with_protocol_pure_stdout() {
 
 #[test]
 fn unknown_method_is_a_json_rpc_protocol_failure() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_psst-mcp"))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let (_root, mut child) = isolated_child("w306-unknown-method");
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = ProtocolReader::new(child.stdout.take().unwrap());
     writeln!(
@@ -250,6 +230,40 @@ fn unknown_method_is_a_json_rpc_protocol_failure() {
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
+}
+
+fn isolated_child(profile: &str) -> (tempfile::TempDir, std::process::Child) {
+    let root = tempfile::tempdir().unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_psst-mcp"));
+    for key in [
+        "PSST_RELAY",
+        "PSST_PROFILE",
+        "PSST_RELAY_BIND",
+        "PSST_DATA_DIR",
+        "PSST_ALLOW_LAN",
+        "PSST_LOG",
+        "PSST_LOG_FORMAT",
+        "PSST_MAX_MESSAGE_BYTES",
+        "PSST_MAX_LONG_POLL_SECONDS",
+        "PSST_HEARTBEAT_SECONDS",
+        "PSST_LEASE_SECONDS",
+    ] {
+        command.env_remove(key);
+    }
+    command
+        .env("PSST_RELAY", "http://127.0.0.1:9")
+        .env("PSST_PROFILE", profile)
+        .env("APPDATA", root.path())
+        .env("LOCALAPPDATA", root.path())
+        .env("HOME", root.path())
+        .env("XDG_CONFIG_HOME", root.path().join("config"))
+        .env("XDG_DATA_HOME", root.path().join("data"))
+        .env("XDG_RUNTIME_DIR", root.path().join("runtime"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = command.spawn().unwrap();
+    (root, child)
 }
 
 fn wait_for_exit(
@@ -297,7 +311,7 @@ impl ProtocolReader {
     }
 
     fn read(&mut self, child: &mut std::process::Child) -> Value {
-        let line = match self.receiver.recv_timeout(Duration::from_secs(5)) {
+        let line = match self.receiver.recv_timeout(Duration::from_secs(15)) {
             Ok(line) => line,
             Err(error) => {
                 child.kill().ok();

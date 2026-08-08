@@ -5,11 +5,14 @@
 mod cli;
 mod config;
 mod error;
+mod leave_journal;
 mod mcp;
 mod profile;
+mod session;
 
 pub use cli::*;
 pub use config::*;
 pub use error::*;
 pub use mcp::*;
 pub use profile::*;
+pub use session::*;

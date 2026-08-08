@@ -4,11 +4,15 @@
 
 use psst_application::{
     CLI_HELP, CliCommand, CliFailure, CliSuccess, ConfigFlags, ConfigInputs, ConfigResolver,
-    CredentialState, LocalErrorCode, PlatformPaths, ResolvedConfig, emit_json_failure,
-    emit_json_success, map_client_error,
+    CredentialState, LocalErrorCode, PlatformPaths, ResolvedConfig, RuntimeSpec, SessionError,
+    SessionHealth, SessionRuntime, UnboundRuntimeSpec, emit_json_failure, emit_json_success,
+    load_profile, map_client_error,
 };
 use psst_client::{Client, ClientConfig};
-use psst_protocol::CreateSquadRequest;
+use psst_protocol::{
+    AckMessagesRequest, AgentModeDto, ClientMetadata, CreateSquadRequest, InboxResponse,
+    JoinSquadRequest, LeaveSquadResponse, MessagePriorityDto, MessageSequence,
+};
 use serde::Serialize;
 use serde_json::Value;
 use std::fmt::Write as _;
@@ -16,10 +20,12 @@ use std::{
     collections::BTreeMap,
     ffi::{OsStr, OsString},
     future::Future,
-    io::{self, Write},
+    io::{self, Read, Write},
     net::SocketAddr,
     path::PathBuf,
     process::ExitCode,
+    sync::Arc,
+    time::Duration,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -264,11 +270,416 @@ async fn execute(options: &GlobalOptions, command: ParsedCommand) -> Result<Valu
                 .map_err(|error| map_client_error(&error))?,
         )
         .map_err(|_| LocalErrorCode::Internal),
-        ParsedCommand::Deferred { arguments, .. } => {
-            let _ = arguments;
-            Err(LocalErrorCode::Unsupported)
+        ParsedCommand::Deferred { command, arguments } => {
+            execute_protected(options, command, &arguments).await
         }
     }
+}
+
+struct ProfileSession {
+    client: Arc<Client>,
+    runtime: SessionRuntime,
+}
+
+fn local_io(error: &io::Error) -> LocalErrorCode {
+    match error.kind() {
+        io::ErrorKind::PermissionDenied => LocalErrorCode::LocalPermission,
+        io::ErrorKind::WouldBlock | io::ErrorKind::AddrInUse => LocalErrorCode::ProfileLocked,
+        io::ErrorKind::AlreadyExists => LocalErrorCode::ProfileAlreadyBound,
+        io::ErrorKind::NotFound => LocalErrorCode::InvalidSession,
+        _ => LocalErrorCode::LocalRead,
+    }
+}
+
+fn input_io(error: &io::Error) -> LocalErrorCode {
+    if error.kind() == io::ErrorKind::PermissionDenied {
+        LocalErrorCode::LocalPermission
+    } else {
+        LocalErrorCode::LocalRead
+    }
+}
+
+fn map_session_error(error: &SessionError) -> LocalErrorCode {
+    match error {
+        SessionError::Local(error) => local_io(error),
+        SessionError::Relay(error) => map_client_error(error),
+        SessionError::ShutdownTimedOut | SessionError::RecoveryOutcomeUnknown => {
+            LocalErrorCode::OutcomeUnknown
+        }
+        SessionError::NotReady => LocalErrorCode::InvalidSession,
+        SessionError::Unbound => LocalErrorCode::ProfileUnbound,
+        SessionError::SendCapacity | SessionError::OperationCapacity => LocalErrorCode::LocalLock,
+    }
+}
+
+async fn open_session(resolved: &ResolvedConfig) -> Result<ProfileSession, LocalErrorCode> {
+    let paths = psst_application::ProfilePaths::for_profile(
+        &resolved.paths,
+        &resolved.relay_origin.value,
+        &resolved.profile.value,
+    )
+    .map_err(|_| LocalErrorCode::InvalidConfiguration)?;
+    let mut binding = load_profile(&paths.metadata).map_err(|error| local_io(&error))?;
+    if binding.is_none() {
+        SessionRuntime::recover_orphaned_leave(
+            paths.clone(),
+            resolved.relay_origin.value.clone(),
+            resolved.profile.value.clone(),
+        )
+        .await
+        .map_err(|error| map_session_error(&error))?;
+        binding = load_profile(&paths.metadata).map_err(|error| local_io(&error))?;
+    }
+    let binding = binding.ok_or(LocalErrorCode::ProfileUnbound)?;
+    psst_application::verify_profile_origin(&binding, &resolved.relay_origin.value)
+        .map_err(|_| LocalErrorCode::ProfileOriginMismatch)?;
+    let client = Arc::new(client(resolved)?);
+    let runtime = SessionRuntime::start(
+        client.clone(),
+        RuntimeSpec {
+            profile: binding,
+            paths,
+            mode: AgentModeDto::Cooperative,
+            client_metadata: cli_metadata(),
+            shutdown_bound: Duration::from_secs(5),
+        },
+    )
+    .await
+    .map_err(|error| map_session_error(&error))?;
+    Ok(ProfileSession { client, runtime })
+}
+
+fn cli_metadata() -> ClientMetadata {
+    ClientMetadata {
+        kind: "psst-cli".into(),
+        hostname: None,
+        version: Some(VERSION.into()),
+    }
+}
+
+async fn execute_protected(
+    options: &GlobalOptions,
+    command: CliCommand,
+    args: &[OsString],
+) -> Result<Value, LocalErrorCode> {
+    let resolved = resolve_config(options, None)?;
+    if command == CliCommand::SquadJoin {
+        return execute_join(&resolved, args).await;
+    }
+    let session = open_session(&resolved).await?;
+    let result = match command {
+        CliCommand::SquadLeave => {
+            let leave = session.runtime.leave().await;
+            return finish_leave(leave, session.runtime.shutdown()).await;
+        }
+        CliCommand::SquadArchive => {
+            let authority = session
+                .runtime
+                .authority()
+                .await
+                .map_err(|error| map_session_error(&error))?;
+            if nonempty(args.get(2)).as_deref() == Some(authority.squad_name.as_str()) {
+                to_value(
+                    session
+                        .runtime
+                        .archive()
+                        .await
+                        .map_err(|error| map_session_error(&error))?,
+                )
+            } else {
+                Err(LocalErrorCode::AuthorityDenied)
+            }
+        }
+        CliCommand::SquadRoster => to_value(
+            session
+                .runtime
+                .roster()
+                .await
+                .map_err(|error| map_session_error(&error))?,
+        ),
+        CliCommand::Status => {
+            let snapshot = session.runtime.snapshot().await;
+            Ok(serde_json::json!({
+                "health": session_health_name(snapshot.health),
+                "generation": snapshot.generation,
+                "instance_id": snapshot.instance_id,
+                "heartbeat_interval_seconds": snapshot.heartbeat_interval_seconds,
+                "lease_expires_at": snapshot.lease_expires_at,
+            }))
+        }
+        CliCommand::MessageSend => execute_send(&resolved, &session, args).await,
+        CliCommand::Inbox => execute_inbox(&session, args).await,
+        CliCommand::MessageAcknowledge => execute_ack(&session, &args[2..]).await,
+        CliCommand::Transcript => execute_transcript(&session, args).await,
+        CliCommand::Listen => execute_listen_until(&session, args, shutdown_signal()).await,
+        _ => Err(LocalErrorCode::Unsupported),
+    };
+    let shutdown = session.runtime.shutdown().await;
+    match (result, shutdown) {
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(map_session_error(&error)),
+        (Ok(value), Ok(())) => Ok(value),
+    }
+}
+
+async fn finish_leave(
+    leave: Result<LeaveSquadResponse, SessionError>,
+    shutdown: impl Future<Output = Result<(), SessionError>>,
+) -> Result<Value, LocalErrorCode> {
+    match leave {
+        Ok(response) => to_value(response),
+        Err(error) => {
+            // The leave failure is the command outcome. Shutdown is still awaited to reap the
+            // runtime and release its profile lock, but a shutdown failure must not mask the more
+            // specific leave error.
+            let _ = shutdown.await;
+            Err(map_session_error(&error))
+        }
+    }
+}
+
+const fn session_health_name(health: SessionHealth) -> &'static str {
+    match health {
+        SessionHealth::Ready => "ready",
+        SessionHealth::Degraded => "degraded",
+        SessionHealth::OutcomeUnknown => "outcome_unknown",
+        SessionHealth::RotationFailed => "rotation_failed",
+        SessionHealth::Stopped => "stopped",
+    }
+}
+
+fn to_value(value: impl Serialize) -> Result<Value, LocalErrorCode> {
+    serde_json::to_value(value).map_err(|_| LocalErrorCode::Internal)
+}
+
+async fn execute_join(
+    resolved: &ResolvedConfig,
+    args: &[OsString],
+) -> Result<Value, LocalErrorCode> {
+    let values = parse_option_pairs(&args[3..], &["--name", "--role", "--mission"])
+        .ok_or(LocalErrorCode::InvalidInput)?;
+    let squad = nonempty(args.get(2)).ok_or(LocalErrorCode::InvalidInput)?;
+    let paths = psst_application::ProfilePaths::for_profile(
+        &resolved.paths,
+        &resolved.relay_origin.value,
+        &resolved.profile.value,
+    )
+    .map_err(|_| LocalErrorCode::InvalidConfiguration)?;
+    let client = Arc::new(client(resolved)?);
+    let joined = SessionRuntime::join_and_bind(
+        client,
+        UnboundRuntimeSpec {
+            relay_origin: resolved.relay_origin.value.clone(),
+            profile_name: resolved.profile.value.clone(),
+            squad,
+            paths,
+            shutdown_bound: Duration::from_secs(5),
+        },
+        JoinSquadRequest {
+            name: values["--name"].clone(),
+            role: values["--role"].clone(),
+            mode: AgentModeDto::Cooperative,
+            client: cli_metadata(),
+            mission: values.get("--mission").cloned(),
+        },
+    )
+    .await
+    .map_err(|error| map_session_error(&error))?;
+    let response = to_value(joined.response)?;
+    joined
+        .runtime
+        .shutdown()
+        .await
+        .map_err(|error| map_session_error(&error))?;
+    Ok(response)
+}
+
+async fn execute_send(
+    resolved: &ResolvedConfig,
+    session: &ProfileSession,
+    args: &[OsString],
+) -> Result<Value, LocalErrorCode> {
+    let values = parse_option_pairs(
+        &args[2..],
+        &[
+            "--to",
+            "--body",
+            "--file",
+            "--priority",
+            "--reply-to",
+            "--correlation-id",
+        ],
+    )
+    .expect("validated grammar");
+    let body = if let Some(body) = values.get("--body") {
+        if body.len() as u64 > resolved.max_message_bytes.value {
+            return Err(LocalErrorCode::PayloadTooLarge);
+        }
+        body.clone()
+    } else {
+        let path = &values["--file"];
+        if path == "-" {
+            read_bounded_utf8(io::stdin(), resolved.max_message_bytes.value)?
+        } else {
+            let metadata = std::fs::metadata(path).map_err(|error| input_io(&error))?;
+            if metadata.len() > resolved.max_message_bytes.value {
+                return Err(LocalErrorCode::PayloadTooLarge);
+            }
+            let file = std::fs::File::open(path).map_err(|error| input_io(&error))?;
+            read_bounded_utf8(file, resolved.max_message_bytes.value)?
+        }
+    };
+    let priority = if values.get("--priority").is_some_and(|v| v == "high") {
+        MessagePriorityDto::High
+    } else {
+        MessagePriorityDto::Normal
+    };
+    let prepared = session
+        .client
+        .prepare_send(
+            values["--to"].clone(),
+            body,
+            priority,
+            values.get("--reply-to").cloned(),
+            values.get("--correlation-id").cloned(),
+        )
+        .map_err(|error| map_client_error(&error))?;
+    to_value(
+        session
+            .runtime
+            .send_prepared(&prepared)
+            .await
+            .map_err(|error| map_session_error(&error))?,
+    )
+}
+
+fn read_bounded_utf8(reader: impl Read, maximum: u64) -> Result<String, LocalErrorCode> {
+    let mut bytes = Vec::new();
+    reader
+        .take(maximum + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| LocalErrorCode::LocalRead)?;
+    if bytes.len() as u64 > maximum {
+        return Err(LocalErrorCode::PayloadTooLarge);
+    }
+    String::from_utf8(bytes).map_err(|_| LocalErrorCode::InvalidInput)
+}
+
+async fn execute_inbox(
+    session: &ProfileSession,
+    args: &[OsString],
+) -> Result<Value, LocalErrorCode> {
+    let (limit, wait, ack) = inbox_arguments(args);
+    if !ack.is_empty() {
+        session
+            .runtime
+            .acknowledge(&AckMessagesRequest { message_ids: ack })
+            .await
+            .map_err(|error| map_session_error(&error))?;
+    }
+    to_value(
+        session
+            .runtime
+            .inbox(limit, wait)
+            .await
+            .map_err(|error| map_session_error(&error))?,
+    )
+}
+
+async fn execute_ack(session: &ProfileSession, ids: &[OsString]) -> Result<Value, LocalErrorCode> {
+    let request = AckMessagesRequest {
+        message_ids: ids
+            .iter()
+            .map(|v| v.to_string_lossy().into_owned())
+            .collect(),
+    };
+    to_value(
+        session
+            .runtime
+            .acknowledge(&request)
+            .await
+            .map_err(|error| map_session_error(&error))?,
+    )
+}
+
+async fn execute_transcript(
+    session: &ProfileSession,
+    args: &[OsString],
+) -> Result<Value, LocalErrorCode> {
+    let values =
+        parse_option_pairs(&args[1..], &["--after", "--limit"]).expect("validated grammar");
+    let after =
+        MessageSequence::new(values.get("--after").map_or(0, |v| v.parse().unwrap())).unwrap();
+    let limit = values.get("--limit").map_or(100, |v| v.parse().unwrap());
+    to_value(
+        session
+            .runtime
+            .transcript(after, limit)
+            .await
+            .map_err(|error| map_session_error(&error))?,
+    )
+}
+
+async fn execute_listen_until(
+    session: &ProfileSession,
+    args: &[OsString],
+    cancellation: impl Future<Output = ()>,
+) -> Result<Value, LocalErrorCode> {
+    let wait = args
+        .windows(2)
+        .find(|v| v[0] == "--wait")
+        .map_or(30, |v| v[1].to_string_lossy().parse().unwrap());
+    tokio::pin!(cancellation);
+    let response = loop {
+        let poll = session.runtime.inbox(100, wait);
+        let (response, cancelled) = tokio::select! {
+            () = &mut cancellation => (InboxResponse { messages: Vec::new(), pending_count: 0 }, true),
+            response = poll => (response.map_err(|error| map_session_error(&error))?, false),
+        };
+        if !response.messages.is_empty() || wait == 0 || cancelled {
+            break response;
+        }
+    };
+    if args.iter().any(|v| v == "--ack") && !response.messages.is_empty() {
+        session
+            .runtime
+            .acknowledge(&AckMessagesRequest {
+                message_ids: response.messages.iter().map(|m| m.id.clone()).collect(),
+            })
+            .await
+            .map_err(|error| map_session_error(&error))?;
+    }
+    to_value(response)
+}
+
+fn inbox_arguments(args: &[OsString]) -> (u16, u8, Vec<String>) {
+    let mut limit = 100;
+    let mut wait = 0;
+    let mut ack = Vec::new();
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].to_str() {
+            Some("--limit") => {
+                index += 1;
+                limit = args[index].to_string_lossy().parse().unwrap();
+            }
+            Some("--wait") => {
+                index += 1;
+                wait = args[index].to_string_lossy().parse().unwrap();
+            }
+            Some("--ack") => {
+                index += 1;
+                while index < args.len() && !args[index].to_string_lossy().starts_with("--") {
+                    ack.push(args[index].to_string_lossy().into_owned());
+                    index += 1;
+                }
+                continue;
+            }
+            _ => unreachable!(),
+        }
+        index += 1;
+    }
+    (limit, wait, ack)
 }
 
 fn client(config: &ResolvedConfig) -> Result<Client, LocalErrorCode> {
@@ -339,6 +750,7 @@ async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
+#[cfg(any(windows, test))]
 async fn first_shutdown_signal<P, A>(
     primary: impl Future<Output = P>,
     alternate: impl Future<Output = A>,
@@ -765,6 +1177,7 @@ fn parse_deferred(args: &[OsString], json: bool) -> Result<ParsedCommand, ParseE
         "message send" if valid_send_grammar(args) => CliCommand::MessageSend,
         "message acknowledge"
             if args.len() >= 3
+                && args.len() <= 102
                 && args[2..]
                     .iter()
                     .all(|value| nonempty(Some(value)).is_some()) =>
@@ -893,6 +1306,9 @@ fn valid_inbox_grammar(args: &[OsString]) -> bool {
                 if index == start {
                     return false;
                 }
+                if index - start > 100 {
+                    return false;
+                }
                 continue;
             }
             _ => return false,
@@ -929,7 +1345,7 @@ fn valid_transcript_grammar(args: &[OsString]) -> bool {
     };
     options
         .get("--after")
-        .is_none_or(|value| value.parse::<u64>().is_ok())
+        .is_none_or(|value| value.parse::<i64>().is_ok_and(|number| number >= 0))
         && options.get("--limit").is_none_or(|value| {
             value
                 .parse::<u16>()
@@ -1017,7 +1433,50 @@ fn command_os_arg(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use psst_application::ProfilePaths;
     use std::time::Duration;
+
+    #[test]
+    fn local_send_capacity_maps_to_local_lock_not_relay_database_busy() {
+        assert_eq!(
+            map_session_error(&SessionError::SendCapacity),
+            LocalErrorCode::LocalLock
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_leave_awaits_shutdown_without_masking_the_leave_error() {
+        let shutdown_awaited = std::sync::atomic::AtomicBool::new(false);
+        let result = finish_leave(Err(SessionError::NotReady), async {
+            shutdown_awaited.store(true, std::sync::atomic::Ordering::SeqCst);
+            Err(SessionError::ShutdownTimedOut)
+        })
+        .await;
+        assert_eq!(result.unwrap_err(), LocalErrorCode::InvalidSession);
+        assert!(shutdown_awaited.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    fn write_restricted(path: &std::path::Path, bytes: &[u8]) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        #[cfg(windows)]
+        let mut file = psst_platform_security::create_restricted_file(
+            path,
+            &psst_platform_security::current_process_sid().unwrap(),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        let mut file = {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(path)
+                .unwrap()
+        };
+        file.write_all(bytes).unwrap();
+        file.sync_all().unwrap();
+    }
 
     async fn invoke(args: &[&str]) -> (u8, String, String) {
         let mut stdout = Vec::new();
@@ -1040,6 +1499,62 @@ mod tests {
         assert_eq!(code, 0);
         assert_eq!(stdout, format!("psst {VERSION}\n"));
         assert!(stderr.is_empty());
+    }
+
+    #[tokio::test]
+    async fn missing_metadata_replays_confirmed_leave_and_fails_closed_on_intent() {
+        for phase in ["confirmed", "intent"] {
+            let directory = tempfile::tempdir().unwrap();
+            let origin = "http://127.0.0.1:9";
+            let platform_paths = PlatformPaths {
+                config_dir: directory.path().join("config"),
+                data_dir: directory.path().join("state"),
+                runtime_dir: directory.path().join("runtime"),
+            };
+            let resolved = ConfigResolver::new(platform_paths.clone())
+                .resolve(&ConfigInputs {
+                    flags: ConfigFlags {
+                        config_path: Some(directory.path().join("missing.yaml")),
+                        relay_origin: Some(origin.into()),
+                        profile: Some("default".into()),
+                        ..ConfigFlags::default()
+                    },
+                    environment: BTreeMap::new(),
+                })
+                .unwrap();
+            let paths = ProfilePaths::for_profile(&platform_paths, origin, "default").unwrap();
+            let journal = paths.metadata.with_file_name(format!(
+                "{}.leave-v1.json",
+                paths.metadata.file_stem().unwrap().to_string_lossy()
+            ));
+            let confirmed_at = (phase == "confirmed")
+                .then_some(serde_json::json!("2026-08-08T01:02:04.005Z"))
+                .unwrap_or(serde_json::Value::Null);
+            let record = serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "phase": phase,
+                "relay_origin": origin,
+                "profile": "default",
+                "squad_name": "alpha",
+                "squad_id": "sqd_alpha",
+                "member_id": "mem_worker",
+                "operation_id": "fixed-operation-0",
+                "created_at": "2026-08-08T01:02:03.004Z",
+                "confirmed_at": confirmed_at,
+            }))
+            .unwrap();
+            write_restricted(&journal, &record);
+
+            let result = open_session(&resolved).await;
+            if phase == "confirmed" {
+                assert!(matches!(result, Err(LocalErrorCode::ProfileUnbound)));
+                assert!(!journal.exists());
+            } else {
+                assert!(matches!(result, Err(LocalErrorCode::OutcomeUnknown)));
+                assert!(journal.exists());
+            }
+            assert!(!paths.metadata.exists());
+        }
     }
 
     #[tokio::test]
@@ -1078,26 +1593,100 @@ mod tests {
             "psst", "message", "send", "--to", "worker", "--body", "--json",
         ])
         .await;
-        assert_eq!(code, 2);
+        assert_ne!(
+            code, 2,
+            "--json is the message body, not a late global flag"
+        );
         assert!(stdout.is_empty());
-        assert_eq!(stderr, "psst: The operation is not supported.\n");
+        assert!(stderr.starts_with("psst: "));
     }
 
     #[tokio::test]
-    async fn deferred_commands_fail_without_touching_secrets_or_input() {
+    async fn every_w305_command_has_an_exact_usage_failure_envelope() {
+        let cases: &[(&[&str], &str)] = &[
+            (&["psst", "--json", "squad", "archive"], "squad_archive"),
+            (
+                &["psst", "--json", "squad", "join", "alpha", "--name", "a"],
+                "squad_join",
+            ),
+            (
+                &["psst", "--json", "squad", "leave", "extra"],
+                "squad_leave",
+            ),
+            (
+                &["psst", "--json", "squad", "roster", "extra"],
+                "squad_roster",
+            ),
+            (
+                &["psst", "--json", "message", "send", "--to", "b"],
+                "message_send",
+            ),
+            (&["psst", "--json", "inbox", "--limit", "0"], "inbox"),
+            (&["psst", "--json", "listen", "--wait", "0"], "listen"),
+            (
+                &["psst", "--json", "message", "acknowledge"],
+                "message_acknowledge",
+            ),
+            (
+                &["psst", "--json", "transcript", "--after", "-1"],
+                "transcript",
+            ),
+            (&["psst", "--json", "status", "extra"], "status"),
+        ];
+        for (arguments, command) in cases {
+            let (code, stdout, stderr) = invoke(arguments).await;
+            assert_eq!(code, 2, "{command}");
+            assert!(stdout.is_empty(), "{command}");
+            assert_eq!(
+                serde_json::from_str::<Value>(&stderr).unwrap(),
+                serde_json::json!({
+                    "version":"psst.cli.v1","ok":false,"command":command,
+                    "error":{"code":"invalid_input","message":"The request is invalid.","retryable":false,"exit_class":"usage"}
+                }),
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn representative_human_messaging_output_is_stable() {
+        let mut output = Vec::new();
+        assert_eq!(
+            write_human(
+                CliCommand::MessageSend,
+                &serde_json::json!({"message":{"id":"msg_one","body":"hello"},"idempotent_replay":false}),
+                &mut output,
+            ),
+            0
+        );
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "{\n  \"idempotent_replay\": false,\n  \"message\": {\n    \"body\": \"hello\",\n    \"id\": \"msg_one\"\n  }\n}\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn grammar_failures_precede_input_and_explicit_stdin_does_not_hang_without_a_session() {
         let (code, stdout, stderr) = invoke(&[
             "psst", "--json", "message", "send", "--to", "worker", "--file", "-",
         ])
         .await;
-        assert_eq!(code, 2);
+        assert_ne!(code, 0);
         assert!(stdout.is_empty());
-        assert!(stderr.contains("unsupported"));
+        assert!(!stderr.to_ascii_lowercase().contains("bearer "));
 
         for invalid in [
             vec!["psst", "--json", "message", "send", "--to", "worker"],
             vec!["psst", "--json", "squad", "join", "alpha", "--name", "one"],
             vec!["psst", "--json", "inbox", "--limit", "101"],
             vec!["psst", "--json", "listen", "--ack", "extra"],
+            vec![
+                "psst",
+                "--json",
+                "transcript",
+                "--after",
+                "9223372036854775808",
+            ],
             vec!["psst", "--json", "database", "backup"],
         ] {
             let (code, stdout, stderr) = invoke(&invalid).await;
@@ -1109,6 +1698,30 @@ mod tests {
                 "{invalid:?}"
             );
         }
+
+        let mut oversized_ack = vec![OsString::from("message"), OsString::from("acknowledge")];
+        oversized_ack.extend((0..101).map(|index| OsString::from(format!("msg_{index}"))));
+        assert!(parse_deferred(&oversized_ack, true).is_err());
+
+        let mut oversized_inbox_ack = vec![OsString::from("inbox"), OsString::from("--ack")];
+        oversized_inbox_ack.extend((0..101).map(|index| OsString::from(format!("msg_{index}"))));
+        assert!(parse_deferred(&oversized_inbox_ack, true).is_err());
+    }
+
+    #[test]
+    fn explicit_input_reader_accepts_exact_bound_and_rejects_oversize_and_invalid_utf8() {
+        assert_eq!(
+            read_bounded_utf8(io::Cursor::new(b"12345"), 5),
+            Ok("12345".into())
+        );
+        assert_eq!(
+            read_bounded_utf8(io::Cursor::new(b"123456"), 5),
+            Err(LocalErrorCode::PayloadTooLarge)
+        );
+        assert_eq!(
+            read_bounded_utf8(io::Cursor::new([0xff]), 5),
+            Err(LocalErrorCode::InvalidInput)
+        );
     }
 
     #[tokio::test]

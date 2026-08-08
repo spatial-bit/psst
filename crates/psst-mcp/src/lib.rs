@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod dispatch;
 mod server;
 
 use rmcp::ServiceExt;
@@ -27,15 +28,41 @@ where
     R: AsyncRead + Unpin + Send + 'static,
     W: AsyncWrite + Unpin + Send + 'static,
 {
+    serve_bounded_with(CooperativeServer::default(), input, output).await
+}
+
+/// Runs a configured cooperative server behind the same bounded framing boundary.
+///
+/// # Errors
+/// Returns a fixed local I/O error when framing, protocol service, session, or cleanup fails.
+pub async fn serve_bounded_with<R, W>(
+    server: CooperativeServer,
+    input: R,
+    output: W,
+) -> io::Result<()>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    let shutdown_server = server.clone();
+    let result = serve_protocol(server, input, output).await;
+    if shutdown_server.shutdown().await.is_err() && result.is_ok() {
+        return Err(io::Error::other("cooperative session shutdown failed"));
+    }
+    result
+}
+
+async fn serve_protocol<R, W>(server: CooperativeServer, input: R, output: W) -> io::Result<()>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
     let (sdk_input, pump_input) = tokio::io::duplex(8192);
     let (pump_output, sdk_output) = tokio::io::duplex(8192);
     let input_task = tokio::spawn(pump_lines(input, pump_input, MAX_INBOUND_LINE_BYTES));
     let output_task = tokio::spawn(pump_lines(pump_output, output, MAX_OUTBOUND_LINE_BYTES));
 
-    let Ok(service) = CooperativeServer::default()
-        .serve((sdk_input, sdk_output))
-        .await
-    else {
+    let Ok(service) = server.serve((sdk_input, sdk_output)).await else {
         cancel_and_reap(input_task).await;
         cancel_and_reap(output_task).await;
         return Err(io::Error::other("protocol session failed"));
@@ -50,7 +77,7 @@ where
     let mut input_task = input_task;
     let mut output_task = output_task;
 
-    tokio::select! {
+    let result = tokio::select! {
         result = &mut input_task => {
             let input = match flatten_join(result, "input task failed") {
                 Ok(input) => input,
@@ -97,7 +124,8 @@ where
             await_bounded(&mut output_task, "output cleanup timed out").await?;
             service
         }
-    }
+    };
+    result
 }
 
 fn flatten_join(

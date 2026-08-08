@@ -7,6 +7,7 @@ use std::{
 };
 
 const VERSION: u32 = 1;
+pub const MAX_CREDENTIAL_BYTES: u64 = 16 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CredentialBinding {
@@ -33,8 +34,8 @@ impl CredentialBinding {
             || !profile
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
-            || squad_id.is_empty()
-            || member_id.is_empty()
+            || psst_core::SquadId::new(squad_id).is_err()
+            || psst_core::MembershipId::new(member_id).is_err()
         {
             return Err(invalid());
         }
@@ -123,6 +124,36 @@ impl CredentialStore {
     pub fn exists(&self) -> bool {
         self.path.is_file()
     }
+    /// Removes this store's validated credential record.
+    ///
+    /// # Errors
+    /// Rejects unsafe paths and returns durable removal failures.
+    pub fn clear(&self) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            use rustix::fs::{AtFlags, unlinkat};
+            match unlinkat(
+                &self.directory_guard,
+                self.path.file_name().ok_or_else(invalid)?,
+                AtFlags::empty(),
+            ) {
+                Ok(()) => self.directory_guard.sync_all(),
+                Err(error) if error == rustix::io::Errno::NOENT => Ok(()),
+                Err(error) => Err(io::Error::from(error)),
+            }
+        }
+        #[cfg(windows)]
+        {
+            if !self.path.exists() {
+                return Ok(());
+            }
+            reject_substitution(&self.path)?;
+            let file = open_existing_for_delete(&self.path)?;
+            verify_restricted_handle(&file)?;
+            verify_restricted_handle_acl(&file)?;
+            psst_platform_security::delete_held_file(&file)
+        }
+    }
     /// Atomically persists authority under its complete identity binding.
     ///
     /// # Errors
@@ -140,6 +171,12 @@ impl CredentialStore {
         credential: &Credential,
         fault: CredentialFault,
     ) -> io::Result<()> {
+        CredentialBinding::new(
+            &binding.relay_origin,
+            &binding.profile,
+            &binding.squad_id,
+            &binding.member_id,
+        )?;
         reject_substitution(&self.path)?;
         let authorization = credential.value.to_str().map_err(|_| invalid())?.to_owned();
         let record = Record {
@@ -199,12 +236,18 @@ impl CredentialStore {
     /// # Errors
     /// Rejects corruption, unsafe permissions, path substitution, and stale binding.
     pub fn load(&self, expected: &CredentialBinding) -> io::Result<Credential> {
+        CredentialBinding::new(
+            &expected.relay_origin,
+            &expected.profile,
+            &expected.squad_id,
+            &expected.member_id,
+        )?;
         #[cfg(windows)]
         reject_substitution(&self.path)?;
         #[cfg(windows)]
-        let mut file = open_existing_secure(&self.path)?;
+        let file = open_existing_secure(&self.path)?;
         #[cfg(unix)]
-        let mut file = fs::File::from(
+        let file = fs::File::from(
             rustix::fs::openat(
                 &self.directory_guard,
                 self.path.file_name().ok_or_else(invalid)?,
@@ -218,14 +261,26 @@ impl CredentialStore {
         verify_restricted_handle(&file)?;
         #[cfg(windows)]
         verify_restricted(&self.path)?;
+        let length = file.metadata()?.len();
+        if length == 0 || length > MAX_CREDENTIAL_BYTES {
+            return Err(invalid());
+        }
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)?;
+        file.take(MAX_CREDENTIAL_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_CREDENTIAL_BYTES {
+            return Err(invalid());
+        }
         let record: Record = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+        let record_binding = CredentialBinding::new(
+            &record.relay_origin,
+            &record.profile,
+            &record.squad_id,
+            &record.member_id,
+        )?;
         if record.version != VERSION
-            || record.relay_origin != expected.relay_origin
-            || record.profile != expected.profile
-            || record.squad_id != expected.squad_id
-            || record.member_id != expected.member_id
+            || record_binding != *expected
+            || psst_core::InstanceId::new(&record.instance_id).is_err()
         {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -416,7 +471,7 @@ fn open_existing_secure(path: &Path) -> io::Result<fs::File> {
     options.read(true);
     {
         use std::os::windows::fs::OpenOptionsExt;
-        options.share_mode(1 | 2).custom_flags(0x0020_0000);
+        options.share_mode(1 | 2 | 4).custom_flags(0x0020_0000);
     }
     let file = options.open(path)?;
     {
@@ -428,6 +483,21 @@ fn open_existing_secure(path: &Path) -> io::Result<fs::File> {
             ));
         }
     }
+    Ok(file)
+}
+
+#[cfg(windows)]
+fn open_existing_for_delete(path: &Path) -> io::Result<fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let mut options = fs::OpenOptions::new();
+    // GENERIC_READ | DELETE. Excluding FILE_SHARE_DELETE pins this exact object through
+    // validation and handle-based deletion.
+    options
+        .access_mode(0x8000_0000 | 0x0001_0000)
+        .share_mode(1 | 2)
+        .custom_flags(0x0020_0000);
+    let file = options.open(path)?;
+    verify_restricted_handle(&file)?;
     Ok(file)
 }
 fn reject_substitution(path: &Path) -> io::Result<()> {
@@ -509,45 +579,9 @@ fn current_process_sid() -> io::Result<String> {
 }
 #[cfg(windows)]
 fn verify_restricted(path: &Path) -> io::Result<()> {
-    let sid = current_process_sid()?;
-    let snapshot = tempfile::NamedTempFile::new()?;
-    let status = std::process::Command::new("icacls")
-        .arg(path)
-        .arg("/save")
-        .arg(snapshot.path())
-        .args(["/c", "/q"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()?;
-    let bytes = fs::read(snapshot.path())?;
-    let units: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|v| u16::from_le_bytes([v[0], v[1]]))
-        .collect();
-    let text = String::from_utf16_lossy(&units);
-    let aces: Vec<_> = text
-        .split('(')
-        .skip(1)
-        .filter_map(|part| part.split_once(')').map(|v| v.0))
-        .collect();
-    let safe = status.success()
-        && text.contains("D:P")
-        && !aces.is_empty()
-        && aces.iter().all(|ace| {
-            let fields: Vec<_> = ace.split(';').collect();
-            fields.len() >= 6
-                && fields[0] == "A"
-                && fields[2].contains("FA")
-                && fields[5].trim().eq_ignore_ascii_case(&sid)
-        });
-    if safe {
-        Ok(())
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "credential ACL is unsafe",
-        ))
-    }
+    let file = open_existing_secure(path)?;
+    verify_restricted_handle(&file)?;
+    verify_restricted_handle_acl(&file)
 }
 #[cfg(windows)]
 fn verify_restricted_handle(file: &fs::File) -> io::Result<()> {
@@ -573,7 +607,7 @@ fn injected() -> io::Error {
 mod tests {
     use super::*;
     fn binding() -> CredentialBinding {
-        CredentialBinding::new("http://127.0.0.1:7341", "default", "squad_one", "mem_one").unwrap()
+        CredentialBinding::new("http://127.0.0.1:7341", "default", "sqd_one", "mem_one").unwrap()
     }
     fn credential(value: &str) -> Credential {
         Credential::from_response(&reqwest::header::HeaderValue::from_str(value).unwrap()).unwrap()
@@ -613,10 +647,29 @@ mod tests {
             assert_eq!(store.load(&binding()).unwrap().instance_id, "ins_one");
         }
         let wrong =
-            CredentialBinding::new("http://127.0.0.1:7341", "default", "squad_one", "mem_other")
+            CredentialBinding::new("http://127.0.0.1:7341", "default", "sqd_one", "mem_other")
                 .unwrap();
         assert!(store.load(&wrong).is_err());
         fs::write(store.path(), b"{}").unwrap();
+        assert!(store.load(&binding()).is_err());
+    }
+    #[test]
+    fn credential_read_rejects_zero_and_oversize_records() {
+        let t = tempfile::tempdir().unwrap();
+        let store = CredentialStore::open(t.path().join("credential.json")).unwrap();
+        store
+            .store(
+                &binding(),
+                &credential("ins_one.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+            )
+            .unwrap();
+        fs::write(store.path(), []).unwrap();
+        assert!(store.load(&binding()).is_err());
+        fs::write(
+            store.path(),
+            vec![b'x'; usize::try_from(MAX_CREDENTIAL_BYTES).unwrap() + 1],
+        )
+        .unwrap();
         assert!(store.load(&binding()).is_err());
     }
     #[test]
@@ -648,7 +701,7 @@ mod tests {
         }
         assert!(CredentialBinding::new("HTTP://EXAMPLE.COM:80/", "bad/name", "s", "m").is_err());
         assert_eq!(
-            CredentialBinding::new("HTTP://EXAMPLE.COM:80/", "ok", "s", "m")
+            CredentialBinding::new("HTTP://EXAMPLE.COM:80/", "ok", "sqd_one", "mem_one")
                 .unwrap()
                 .relay_origin(),
             "http://example.com"
@@ -788,6 +841,32 @@ mod tests {
         fs::write(&unsafe_remnant, b"not trusted").unwrap();
         assert!(CredentialStore::open(target).is_err());
         assert!(unsafe_remnant.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_clear_handle_prevents_path_replacement_until_exact_object_is_deleted() {
+        let t = tempfile::tempdir().unwrap();
+        let path = t.path().join("credential.json");
+        let replacement = t.path().join("replacement.json");
+        let store = CredentialStore::open(path.clone()).unwrap();
+        store
+            .store(
+                &binding(),
+                &credential("ins_one.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+            )
+            .unwrap();
+        fs::write(&replacement, b"attacker replacement").unwrap();
+
+        let held = open_existing_for_delete(&path).unwrap();
+        verify_restricted_handle_acl(&held).unwrap();
+        assert!(fs::rename(&replacement, &path).is_err());
+        assert!(fs::remove_file(&path).is_err());
+        psst_platform_security::delete_held_file(&held).unwrap();
+        drop(held);
+
+        assert!(!path.exists());
+        assert_eq!(fs::read(&replacement).unwrap(), b"attacker replacement");
     }
 
     #[cfg(windows)]

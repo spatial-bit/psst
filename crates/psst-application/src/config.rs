@@ -3,12 +3,14 @@ use serde::Deserialize;
 use std::{
     collections::BTreeMap,
     env, fs,
+    io::Read,
     net::SocketAddr,
     path::{Path, PathBuf},
 };
 use url::Url;
 
 pub const DEFAULT_RELAY_ORIGIN: &str = "http://127.0.0.1:7341";
+pub const MAX_CONFIG_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Debug, Default)]
 pub struct ConfigFlags {
@@ -356,7 +358,22 @@ fn read_config(path: &Path) -> Result<FileConfig, ConfigError> {
     if !path.exists() {
         return Ok(FileConfig::default());
     }
-    let text = fs::read_to_string(path).map_err(|_| ConfigError::Read)?;
+    let file = fs::File::open(path).map_err(|_| ConfigError::Read)?;
+    let length = file.metadata().map_err(|_| ConfigError::Read)?.len();
+    if length == 0 {
+        return Ok(FileConfig::default());
+    }
+    if length > MAX_CONFIG_BYTES {
+        return Err(ConfigError::Read);
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_CONFIG_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ConfigError::Read)?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_CONFIG_BYTES {
+        return Err(ConfigError::Read);
+    }
+    let text = String::from_utf8(bytes).map_err(|_| ConfigError::Parse)?;
     serde_yaml::from_str(&text).map_err(|_| ConfigError::Parse)
 }
 #[allow(clippy::needless_pass_by_value)]
@@ -481,5 +498,20 @@ mod tests {
         ] {
             assert!(canonical_relay_origin(invalid).is_err());
         }
+    }
+    #[test]
+    fn config_file_read_is_bounded_and_rejects_invalid_utf8() {
+        let t = tempfile::tempdir().unwrap();
+        let path = t.path().join("config.yaml");
+        fs::write(
+            &path,
+            vec![b'x'; usize::try_from(MAX_CONFIG_BYTES).unwrap() + 1],
+        )
+        .unwrap();
+        assert!(matches!(read_config(&path), Err(ConfigError::Read)));
+        fs::write(&path, [0xff]).unwrap();
+        assert!(matches!(read_config(&path), Err(ConfigError::Parse)));
+        fs::write(&path, []).unwrap();
+        assert!(read_config(&path).is_ok());
     }
 }

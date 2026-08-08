@@ -932,7 +932,10 @@ dependencies = [
  "fs2",
  "libc",
  "psst-client",
+ "psst-core",
+ "psst-platform-security",
  "psst-protocol",
+ "psst-relay",
  "rustix",
  "schemars",
  "serde",
@@ -940,6 +943,9 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "tempfile",
+ "time",
+ "tokio",
+ "tokio-util",
  "url",
 ]
 
@@ -949,6 +955,7 @@ version = "0.0.0"
 dependencies = [
  "psst-application",
  "psst-client",
+ "psst-platform-security",
  "psst-protocol",
  "psst-relay",
  "psst-store",
@@ -994,8 +1001,13 @@ name = "psst-mcp"
 version = "0.0.0"
 dependencies = [
  "psst-application",
+ "psst-client",
+ "psst-protocol",
+ "psst-relay",
  "rmcp",
+ "serde",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 

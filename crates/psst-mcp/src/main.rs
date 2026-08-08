@@ -1,8 +1,12 @@
-use psst_mcp::serve_bounded;
+use psst_mcp::{CooperativeServer, serve_bounded_with};
 
 #[tokio::main]
 async fn main() {
-    if serve_bounded(tokio::io::stdin(), tokio::io::stdout())
+    let Ok(server) = CooperativeServer::from_environment().await else {
+        eprintln!("psst-mcp: cooperative session startup failed");
+        std::process::exit(70);
+    };
+    if serve_bounded_with(server, tokio::io::stdin(), tokio::io::stdout())
         .await
         .is_err()
     {

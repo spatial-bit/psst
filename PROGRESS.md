@@ -48,16 +48,24 @@ Last reconciled: 2026-08-08
 ## Active
 
 - W-302 configuration, profiles, and credential store.
+- W-303 cooperative session runtime is independently approved after aggregate adversarial review.
+  Windows coordinator gates are green for the full workspace test suite, strict lint, and format;
+  native Linux, macOS, and Windows CI remain pending.
 - W-304 CLI shell and relay operations.
 - W-306 MCP transport and schema contract.
 - W-306 implementation passes exact-schema/runtime validation, independent stdio transcripts,
   strict workspace lint, and the 190-test Windows workspace gate; review and cross-platform CI remain pending.
+- W-307 cooperative MCP business dispatch is implemented locally: all 11 MCP tests pass, including
+  a real-relay two-child lifecycle/replay/ack/reconnect/injection/canary transcript and concurrent
+  long-poll-versus-leave cancellation. Independent adversarial review approved the repaired owned
+  mutation/publication, transition-aware shutdown, orphaned-leave startup topology, and guarded
+  operation drain before profile-lock release. Strict full-workspace lint, formatting, and the
+  serialized full-workspace Windows test gate pass; native CI remains pending.
+- W-305 human squad and messaging CLI is independently approved locally after rebasing every
+  protected operation onto W-303 and repairing failed-leave/archive shutdown paths. Native CI and
+  the explicitly authorized ambiguous-commit proxy evidence remain pending.
 
 ## Ready
-
-- W-303 cooperative session runtime becomes ready after W-302.
-- W-305 human squad and messaging CLI becomes ready after W-302 and W-304.
-- W-307 cooperative MCP tools becomes ready after W-303 and W-306.
 
 ## Gate evidence
 
@@ -68,5 +76,6 @@ Last reconciled: 2026-08-08
 
 ## Next coordinator action
 
-Implement W-302, W-304, and W-306 in parallel behind the frozen W-301 contracts, with independent
-review before integration.
+Commit the independently approved Slice 3 CLI/MCP/runtime integration, push the draft PR, and run
+native Linux, macOS, and Windows CI. The loopback ambiguous-commit CLI proxy remains behind explicit
+user authorization before final dogfood approval.

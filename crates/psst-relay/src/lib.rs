@@ -324,7 +324,7 @@ enum StoreCommand {
         release: std::sync::mpsc::Receiver<()>,
         reply: oneshot::Sender<Result<(), WorkerError>>,
     },
-    #[cfg(test)]
+    #[cfg(any(test, feature = "reliability-test-support"))]
     DelayNextSendReply(
         Duration,
         std::sync::mpsc::Sender<()>,
@@ -403,7 +403,7 @@ impl StoreCommand {
             Self::ControlledBlock { reply, .. } => {
                 let _ = reply.send(Err(WorkerError::Unavailable));
             }
-            #[cfg(test)]
+            #[cfg(any(test, feature = "reliability-test-support"))]
             Self::DelayNextSendReply(_, _, reply) => {
                 let _ = reply.send(Err(WorkerError::Unavailable));
             }
@@ -560,7 +560,7 @@ impl StoreWorker {
             .name("psst-sqlite".into())
             .spawn(move || {
                 let mut store = store;
-                #[cfg(test)]
+                #[cfg(any(test, feature = "reliability-test-support"))]
                 let mut next_send_reply_delay = None;
                 while let Ok(command) = receiver.recv() {
                     if worker_shutdown.load(Ordering::Acquire) {
@@ -586,7 +586,7 @@ impl StoreWorker {
                             let result = release.recv().map_err(|_| WorkerError::Unavailable);
                             let _ = reply.send(result);
                         }
-                        #[cfg(test)]
+                        #[cfg(any(test, feature = "reliability-test-support"))]
                         StoreCommand::DelayNextSendReply(delay, completed, reply) => {
                             next_send_reply_delay = Some((delay, completed));
                             let _ = reply.send(Ok(()));
@@ -648,14 +648,14 @@ impl StoreWorker {
                                 worker_notifications
                                     .notify(&outcome.message.message.semantics.recipient);
                             }
-                            #[cfg(test)]
+                            #[cfg(any(test, feature = "reliability-test-support"))]
                             let delayed_completion =
                                 next_send_reply_delay.take().map(|(delay, completed)| {
                                     std::thread::sleep(delay);
                                     completed
                                 });
                             let _ = reply.send(result);
-                            #[cfg(test)]
+                            #[cfg(any(test, feature = "reliability-test-support"))]
                             if let Some(completed) = delayed_completion {
                                 let _ = completed.send(());
                             }
@@ -769,8 +769,9 @@ impl StoreWorker {
         .await
     }
 
-    #[cfg(test)]
-    async fn delay_next_send_reply(
+    #[cfg(any(test, feature = "reliability-test-support"))]
+    #[doc(hidden)]
+    pub async fn reliability_delay_next_send_reply(
         &self,
         delay: Duration,
     ) -> Result<std::sync::mpsc::Receiver<()>, WorkerError> {
@@ -3542,7 +3543,7 @@ mod tests {
         .await
         .unwrap();
         let completion = worker
-            .delay_next_send_reply(Duration::from_secs(1))
+            .reliability_delay_next_send_reply(Duration::from_secs(1))
             .await
             .unwrap();
         let response = app.oneshot(
@@ -3869,7 +3870,7 @@ mod tests {
         let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
         let _bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
         let send_completed = worker
-            .delay_next_send_reply(Duration::from_millis(750))
+            .reliability_delay_next_send_reply(Duration::from_millis(750))
             .await
             .unwrap();
         let request = || {
