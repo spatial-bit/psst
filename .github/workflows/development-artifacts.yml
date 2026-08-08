@@ -1,0 +1,181 @@
+name: Development artifacts
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/development-artifacts.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "LICENSE"
+      - "crates/**"
+      - "scripts/package-development-artifact.py"
+      - "scripts/smoke-development-relay.py"
+      - "scripts/inspect-development-artifact.py"
+      - "scripts/extract-development-artifact.py"
+      - "docs/development-artifacts.md"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  PSST_PACKAGE_VERSION: 0.0.0
+
+jobs:
+  build:
+    name: ${{ matrix.target }} dogfood relay
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x86_64
+            rust_host: x86_64-pc-windows-msvc
+            binary: target/release/psst-relay.exe
+            format: zip
+          - os: ubuntu-latest
+            target: linux-x86_64
+            rust_host: x86_64-unknown-linux-gnu
+            binary: target/release/psst-relay
+            format: tar.gz
+          - os: macos-15
+            target: macos-aarch64
+            rust_host: aarch64-apple-darwin
+            binary: target/release/psst-relay
+            format: tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.89.0 --profile minimal --no-self-update
+      - name: Select pinned Rust toolchain
+        run: rustup default 1.89.0
+      - name: Assert native host
+        shell: bash
+        run: >-
+          rustc -vV | grep -F "host: ${{ matrix.rust_host }}"
+      - name: Build relay
+        env:
+          PSST_BUILD_REVISION: ${{ github.sha }}
+          PSST_W208_SECRET_CANARY: w208-secret-must-not-ship
+          RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=.
+        run: cargo build --locked --release --package psst-relay
+      - name: Native binary smoke
+        run: python scripts/smoke-development-relay.py --binary "${{ matrix.binary }}"
+      - name: Verify bundled SQLite dependency boundary
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            ! ldd "${{ matrix.binary }}" | grep -i sqlite
+          elif [[ "${{ runner.os }}" == "macOS" ]]; then
+            ! otool -L "${{ matrix.binary }}" | grep -i sqlite
+          else
+            python -c "from pathlib import Path; data=Path(r'${{ matrix.binary }}').read_bytes().lower(); assert b'sqlite3.dll' not in data"
+          fi
+      - name: Package deterministic development layout
+        shell: bash
+        run: >-
+          python scripts/package-development-artifact.py
+          --binary "${{ matrix.binary }}"
+          --target "${{ matrix.target }}"
+          --revision "${{ github.sha }}"
+          --version "${{ env.PSST_PACKAGE_VERSION }}"
+          --output "artifacts/psst-relay-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.${{ matrix.format }}"
+          --license LICENSE
+          --format "${{ matrix.format }}"
+      - name: Inspect archive
+        shell: bash
+        run: >-
+          python scripts/inspect-development-artifact.py
+          --archive "artifacts/psst-relay-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.${{ matrix.format }}"
+          --target "${{ matrix.target }}"
+          --revision "${{ github.sha }}"
+          --version "${{ env.PSST_PACKAGE_VERSION }}"
+          --binary "${{ matrix.binary }}"
+          --forbidden-canary "${{ github.workspace }}"
+          --forbidden-canary "w208-secret-must-not-ship"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.event_name != 'pull_request'
+        with:
+          name: psst-relay-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}
+          path: artifacts/psst-relay-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.${{ matrix.format }}
+          if-no-files-found: error
+          retention-days: 14
+
+  clean-download-rehearsal:
+    name: ${{ matrix.target }} clean downloaded relay rehearsal
+    needs: build
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x86_64
+            extension: zip
+            binary: psst-relay.exe
+          - os: ubuntu-latest
+            target: linux-x86_64
+            extension: tar.gz
+            binary: psst-relay
+          - os: macos-15
+            target: macos-aarch64
+            extension: tar.gz
+            binary: psst-relay
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: psst-relay-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}
+          path: downloaded
+      - name: Extract downloaded artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory extracted | Out-Null
+          if ('${{ matrix.extension }}' -eq 'zip') {
+            Expand-Archive 'downloaded/psst-relay-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.zip' extracted
+          } else {
+            tar -xzf 'downloaded/psst-relay-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.tar.gz' -C extracted
+          }
+      - name: Smoke extracted relay without repository or Rust
+        shell: pwsh
+        run: |
+          $root = Resolve-Path 'extracted/psst-relay-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}'
+          $binary = Join-Path $root '${{ matrix.binary }}'
+          $version = & $binary --version
+          if ($version -ne 'psst-relay ${{ env.PSST_PACKAGE_VERSION }} (${{ github.sha }})') { throw "unexpected version: $version" }
+          $dataRoot = Join-Path $env:RUNNER_TEMP "psst-rehearsal-${{ matrix.target }}"
+          New-Item -ItemType Directory $dataRoot | Out-Null
+          $database = Join-Path $dataRoot 'relay.db'
+          $env:PSST_BIND = '127.0.0.1:17341'
+          $env:PSST_DATABASE = $database
+          $env:PSST_LOG = 'error'
+          $relay = Start-Process -FilePath $binary -PassThru -NoNewWindow
+          try {
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 100; $attempt++) {
+              try {
+                $health = Invoke-RestMethod 'http://127.0.0.1:17341/healthz' -TimeoutSec 1
+                $readiness = Invoke-RestMethod 'http://127.0.0.1:17341/readyz' -TimeoutSec 1
+                $schemaVersion = $readiness.schema_version
+                $integerSchema = $schemaVersion -is [int] -or $schemaVersion -is [long]
+                if ($health.status -eq 'ok' -and $readiness.status -eq 'ready' -and $integerSchema -and $schemaVersion -gt 0) { $ready = $true; break }
+              } catch { Start-Sleep -Milliseconds 100 }
+            }
+            if (-not $ready) { throw 'extracted relay did not become healthy and ready' }
+            if (-not (Test-Path -LiteralPath $database -PathType Leaf)) { throw 'explicit database was not created' }
+            if (Test-Path -LiteralPath (Join-Path $root 'psst.db')) { throw 'relay created an implicit database beside the binary' }
+          } finally {
+            Stop-Process -Id $relay.Id -Force -ErrorAction SilentlyContinue
+            $relay.WaitForExit()
+          }
+          $client = [System.Net.Sockets.TcpClient]::new()
+          try {
+            try {
+              $client.Connect('127.0.0.1', 17341)
+              throw 'listener still accepts connections after relay stop'
+            } catch [System.Net.Sockets.SocketException] { }
+          } finally { $client.Dispose() }
+          Remove-Item -LiteralPath $dataRoot -Recurse -Force

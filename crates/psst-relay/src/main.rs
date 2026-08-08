@@ -23,6 +23,16 @@ fn configuration() -> Result<RelayConfig, Box<dyn std::error::Error + Send + Syn
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    if std::env::args_os().nth(1).is_some_and(|argument| {
+        argument == std::ffi::OsStr::new("--version") || argument == std::ffi::OsStr::new("-V")
+    }) {
+        println!(
+            "psst-relay {} ({})",
+            env!("CARGO_PKG_VERSION"),
+            option_env!("PSST_BUILD_REVISION").unwrap_or("unknown")
+        );
+        return ExitCode::SUCCESS;
+    }
     let config = match configuration() {
         Ok(config) => config,
         Err(error) => {
