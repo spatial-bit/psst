@@ -110,6 +110,7 @@ pub fn create_restricted_file(path: &std::path::Path, sid: &str) -> io::Result<F
 /// # Errors
 /// Returns permission denied unless the held handle has the exact expected protected DACL.
 #[cfg(windows)]
+#[allow(clippy::too_many_lines)]
 pub fn verify_restricted_file(file: &File, sid: &str) -> io::Result<()> {
     use std::{os::windows::io::AsRawHandle, ptr};
     use windows_sys::Win32::{
@@ -163,31 +164,58 @@ pub fn verify_restricted_file(file: &File, sid: &str) -> io::Result<()> {
     let single_ace_ok =
         acl_ok && size.AceCount == 1 && unsafe { GetAce(dacl, 0, &raw mut ace) } != 0;
     let sid_ok = unsafe { ConvertStringSidToSidW(sid_text.as_ptr(), &raw mut expected_sid) } != 0;
-    let exact = if single_ace_ok && sid_ok {
+    let mut ace_type = u8::MAX;
+    let mut ace_flags = u8::MAX;
+    let mut access_mask = 0_u32;
+    let mut equal_sid = false;
+    if single_ace_ok && sid_ok {
         let allowed = ace.cast::<ACCESS_ALLOWED_ACE>();
         let ace_sid = unsafe { (&raw const (*allowed).SidStart).cast_mut().cast() };
-        control_ok
-            && control & SE_DACL_PRESENT != 0
-            && control & SE_DACL_PROTECTED != 0
-            && unsafe {
-                (*allowed).Header.AceType == 0
-                    && (*allowed).Header.AceFlags == 0
-                    && (*allowed).Mask == FILE_ALL_ACCESS
-                    && EqualSid(ace_sid, expected_sid) != 0
-            }
+        ace_type = unsafe { (*allowed).Header.AceType };
+        ace_flags = unsafe { (*allowed).Header.AceFlags };
+        access_mask = unsafe { (*allowed).Mask };
+        equal_sid = unsafe { EqualSid(ace_sid, expected_sid) != 0 };
+    }
+    let failure = if !control_ok {
+        "control_query"
+    } else if control & SE_DACL_PRESENT == 0 {
+        "dacl_not_present"
+    } else if control & SE_DACL_PROTECTED == 0 {
+        "dacl_not_protected"
+    } else if dacl.is_null() {
+        "null_dacl"
+    } else if !acl_ok {
+        "acl_query"
+    } else if size.AceCount != 1 {
+        "ace_count"
+    } else if !single_ace_ok {
+        "ace_query"
+    } else if ace_type != 0 {
+        "ace_type"
+    } else if ace_flags != 0 {
+        "ace_flags"
+    } else if access_mask != FILE_ALL_ACCESS {
+        "access_mask"
+    } else if !sid_ok {
+        "sid_parse"
+    } else if !equal_sid {
+        "sid_mismatch"
     } else {
-        false
+        "none"
     };
     unsafe {
         LocalFree(expected_sid.cast());
         LocalFree(descriptor);
     }
-    if exact {
+    if failure == "none" {
         Ok(())
     } else {
         Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "credential handle DACL is unsafe",
+            format!(
+                "credential handle DACL is unsafe ({failure}; control={control:#06x}; ace_count={}; ace_type={ace_type}; ace_flags={ace_flags:#04x}; access_mask={access_mask:#010x})",
+                size.AceCount
+            ),
         ))
     }
 }
