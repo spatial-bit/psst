@@ -72,16 +72,13 @@ impl PlatformPaths {
         #[cfg(all(unix, not(target_os = "macos")))]
         let (config, data, runtime) = {
             let config = env::var_os("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".config"))
+                .map_or_else(|| home.join(".config"), PathBuf::from)
                 .join("psst");
             let data = env::var_os("XDG_DATA_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".local/share"))
+                .map_or_else(|| home.join(".local/share"), PathBuf::from)
                 .join("psst");
             let runtime = env::var_os("XDG_RUNTIME_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| data.clone())
+                .map_or_else(|| data.clone(), PathBuf::from)
                 .join("psst");
             (config, data, runtime)
         };

@@ -694,7 +694,16 @@ mod tests {
         verify_restricted(&remnant).unwrap();
         #[cfg(unix)]
         {
-            let file = open_existing_secure(&remnant).unwrap();
+            let file = fs::File::from(
+                rustix::fs::open(
+                    &remnant,
+                    rustix::fs::OFlags::RDONLY
+                        | rustix::fs::OFlags::NOFOLLOW
+                        | rustix::fs::OFlags::CLOEXEC,
+                    rustix::fs::Mode::empty(),
+                )
+                .unwrap(),
+            );
             verify_restricted_handle(&file).unwrap();
         }
         let _store = CredentialStore::open(path).unwrap();
