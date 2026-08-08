@@ -12,6 +12,7 @@ on:
       - "scripts/package-development-artifact.py"
       - "scripts/smoke-development-relay.py"
       - "scripts/smoke-development-cooperative.py"
+      - "scripts/smoke-cooperative-reliability.py"
       - "scripts/inspect-development-artifact.py"
       - "scripts/extract-development-artifact.py"
       - "docs/development-artifacts.md"
@@ -23,7 +24,7 @@ permissions:
   contents: read
 
 env:
-  PSST_PACKAGE_VERSION: 0.0.0
+  PSST_PACKAGE_VERSION: 0.1.0-alpha.1
 
 jobs:
   build:
@@ -78,6 +79,28 @@ jobs:
           --psst "${{ matrix.psst }}"
           --psst-mcp "${{ matrix.mcp }}"
           --version "${{ env.PSST_PACKAGE_VERSION }}"
+      - name: Native two-adapter reliability gate
+        run: >-
+          python scripts/smoke-cooperative-reliability.py
+          --psst "${{ matrix.psst }}"
+          --psst-mcp "${{ matrix.mcp }}"
+          --psst-relay "${{ matrix.relay }}"
+          --revision "${{ github.sha }}"
+          --evidence "w309-${{ matrix.target }}-sanitized.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: w309-${{ matrix.target }}-sanitized-evidence
+          path: w309-${{ matrix.target }}-sanitized.json
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.event_name != 'pull_request'
+        with:
+          name: w309-${{ matrix.target }}-harness
+          path: scripts/smoke-cooperative-reliability.py
+          if-no-files-found: error
+          retention-days: 14
       - name: Verify bundled SQLite dependency boundary
         shell: bash
         run: |
@@ -149,6 +172,10 @@ jobs:
         with:
           name: psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}
           path: downloaded
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: w309-${{ matrix.target }}-harness
+          path: harness
       - name: Extract downloaded artifact
         shell: pwsh
         run: |
@@ -288,3 +315,20 @@ jobs:
           $mcpResponse = $mcpOut | ConvertFrom-Json
           if ($mcpProcess.ExitCode -ne 0 -or $mcpErr -or $mcpResponse.id -ne 1 -or $mcpResponse.result.serverInfo.name -ne 'psst-mcp') { throw 'MCP handshake failed or streams were impure' }
           Remove-Item -LiteralPath $dataRoot -Recurse -Force
+      - name: Run downloaded two-adapter reliability gate without repository or Rust
+        shell: pwsh
+        run: |
+          $root = Resolve-Path 'extracted/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}'
+          python harness/smoke-cooperative-reliability.py `
+            --psst (Join-Path $root 'psst${{ matrix.suffix }}') `
+            --psst-mcp (Join-Path $root 'psst-mcp${{ matrix.suffix }}') `
+            --psst-relay (Join-Path $root 'psst-relay${{ matrix.suffix }}') `
+            --revision '${{ github.sha }}' `
+            --evidence 'w309-clean-${{ matrix.target }}-sanitized.json'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: w309-clean-${{ matrix.target }}-sanitized-evidence
+          path: w309-clean-${{ matrix.target }}-sanitized.json
+          if-no-files-found: error
+          retention-days: 14

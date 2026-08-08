@@ -1,6 +1,6 @@
 # W-309: Slice 3 reliability and cooperative dogfood gate
 
-Status: blocked on W-301 through W-308
+Status: automated native candidate implemented locally; native CI, clean-download CI, independent review, and live sessions pending
 
 ## Objective
 
@@ -20,4 +20,17 @@ Independently validate the complete cooperative CLI/MCP slice through automated 
 
 ## Verification evidence
 
-Pending.
+- A checkout-independent Python harness launches the real relay, CLI, and two isolated `psst-mcp`
+  children. It proves distinct joins, online heartbeat presence, bidirectional messages, replay before
+  acknowledgement, acknowledgement, reply, adapter restart/resume, same-database relay restart, and
+  lease-derived offline presence.
+- The harness captures sanitized JSON-RPC plus CLI create/join/leave output, MCP stderr, relay logs,
+  the exact required 40-hex source revision, and binary version. It proves each generated
+  authorization exists only in its credential record before cleanup and scans observable evidence
+  for both authorizations, an environment canary, and both message bodies.
+- The native Windows release binaries passed the complete harness twice consecutively (39.8 and
+  38.9 seconds). Python syntax and workflow/diff gates remain part of final integrated review.
+- The workflow runs the harness on Windows x86-64, Linux x86-64, and macOS ARM64 build outputs, then
+  downloads the same harness separately and repeats it against the clean downloaded archive without
+  a checkout or Rust toolchain. Those CI jobs have not run yet.
+- Interactive Claude Code and Codex walkthroughs are deliberately not claimed and remain pending.
