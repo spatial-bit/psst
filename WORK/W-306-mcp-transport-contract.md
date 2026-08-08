@@ -1,6 +1,6 @@
 # W-306: Cooperative MCP transport and schema contract
 
-Status: active
+Status: verified
 
 ## Objective
 
@@ -39,5 +39,10 @@ Implement a bounded, protocol-pure `psst-mcp` stdio server shell and the reviewe
   interaction and service tasks, and reaps both on success, panic, or timeout.
 - `cargo fmt --all -- --check` and strict workspace/all-target Clippy pass. All 190 workspace tests
   pass on Windows; the credential permission tests require the normal user token because the sandbox
-  token is intentionally excluded after ACL restriction. Independent review and cross-platform CI
-  evidence remain pending.
+  token is intentionally excluded after ACL restriction.
+- Independent adversarial review approved the exact schema conversion, protocol/tool error boundary,
+  Unicode validator parity, structured cancellation, and bounded task cleanup.
+- Revision `1617ec5` passed GitHub Actions on Windows, Linux, and macOS plus native Windows x86-64,
+  Linux x86-64, and macOS ARM64 development-artifact builds:
+  <https://github.com/spatial-bit/psst/actions/runs/31249745457> and
+  <https://github.com/spatial-bit/psst/actions/runs/31249745452>.
