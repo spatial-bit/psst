@@ -47,12 +47,6 @@ Last reconciled: 2026-08-08
 
 ## Active
 
-- W-308 native dogfood artifact and documentation candidate is independently approved locally. The
-  three-platform archives contain CLI, MCP, relay, license, revision/warning, and quickstart; native
-  and checkout-free clean-download jobs enforce exact paths/inventory/modes, pre-extraction traversal
-  rejection, decompressed ASCII/UTF-16LE canary scans, and version/relay/live-CLI/isolated-CLI/MCP
-  smoke. A remapped Windows ZIP passed the local artifact gates. Native package CI remains pending.
-
 - W-302 configuration, profiles, and credential store.
 - W-303 cooperative session runtime is independently approved after aggregate adversarial review.
   Windows coordinator gates are green for the full workspace test suite, strict lint, and format;
@@ -77,6 +71,12 @@ Last reconciled: 2026-08-08
   `c2e4dad3adf67b271a1b6a03a700711818e81503` passed all three native builds and all three
   checkoutless clean-download rehearsals in
   [workflow 31272964987](https://github.com/spatial-bit/psst/actions/runs/31272964987).
+- W-309's automated reliability gate is independently approved and verified at
+  `a4af73ad800dde8ceff8209768685e0d7cf19809`. Standard Windows/Ubuntu/macOS CI passed in
+  [workflow 31274551562](https://github.com/spatial-bit/psst/actions/runs/31274551562); all three
+  native reliability jobs and all three checkoutless artifact rehearsals passed in
+  [workflow 31274817025](https://github.com/spatial-bit/psst/actions/runs/31274817025). The distinct
+  live Claude Code/Codex walkthrough remains pending and is not implied by this automated evidence.
 
 ## Gate evidence
 
@@ -87,5 +87,7 @@ Last reconciled: 2026-08-08
 
 ## Next coordinator action
 
-Begin W-309's final cooperative dogfood gate using the verified W-308 archives. The loopback
-ambiguous-commit CLI proxy remains behind explicit user authorization before final dogfood approval.
+Complete W-309's live Claude Code/Codex walkthrough with distinct profiles at the exact candidate
+revision. The loopback ambiguous-commit CLI proxy remains behind explicit user authorization. Alpha
+tagging also remains blocked on owner-provisioned signing trust, protected-review configuration, an
+isolated trusted-LAN rehearsal, and separate explicit tag/publication authorizations.

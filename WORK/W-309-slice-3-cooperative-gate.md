@@ -1,6 +1,6 @@
 # W-309: Slice 3 reliability and cooperative dogfood gate
 
-Status: automated native candidate implemented locally; native CI, clean-download CI, independent review, and live sessions pending
+Status: automated native and clean-download gates verified at `a4af73a`; live Claude Code/Codex sessions pending
 
 ## Objective
 
@@ -27,10 +27,16 @@ Independently validate the complete cooperative CLI/MCP slice through automated 
 - The harness captures sanitized JSON-RPC plus CLI create/join/leave output, MCP stderr, relay logs,
   the exact required 40-hex source revision, and binary version. It proves each generated
   authorization exists only in its credential record before cleanup and scans observable evidence
-  for both authorizations, an environment canary, and both message bodies.
-- The native Windows release binaries passed the complete harness twice consecutively (39.8 and
-  38.9 seconds). Python syntax and workflow/diff gates remain part of final integrated review.
+  for all generated authorizations, an environment canary, and both message bodies.
+- The native Windows release binaries passed the complete harness repeatedly (39.8, 38.9, 39.0,
+  40.8, and 40.8 seconds across implementation and repair boundaries). Independent adversarial
+  review approved the final process cleanup, revision binding, credential confinement, and evidence
+  scans.
 - The workflow runs the harness on Windows x86-64, Linux x86-64, and macOS ARM64 build outputs, then
   downloads the same harness separately and repeats it against the clean downloaded archive without
-  a checkout or Rust toolchain. Those CI jobs have not run yet.
+  a checkout or Rust toolchain. At revision `a4af73ad800dde8ceff8209768685e0d7cf19809`, all three
+  native jobs and all three checkoutless jobs passed in
+  [workflow 31274817025](https://github.com/spatial-bit/psst/actions/runs/31274817025). Standard
+  Windows, Ubuntu, and macOS CI passed in
+  [workflow 31274551562](https://github.com/spatial-bit/psst/actions/runs/31274551562).
 - Interactive Claude Code and Codex walkthroughs are deliberately not claimed and remain pending.
