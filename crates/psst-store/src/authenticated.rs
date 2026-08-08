@@ -1,6 +1,7 @@
 use psst_core::{
     AgentMode, Availability, AvailabilityObservation, AvailabilitySource, InstanceId,
-    InstanceState, MembershipId, MessageId, ResumeToken, SquadId, UnixMillis, renew_lease,
+    InstanceState, MembershipId, MessageId, ResumeToken, SquadId, SquadName, SquadState,
+    UnixMillis, renew_lease,
 };
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 
@@ -9,13 +10,12 @@ use crate::instance::{authenticate, insert_instance, validate_client, validate_o
 use crate::message::{resolve_retry, send_in_transaction};
 use crate::{
     AcknowledgeMessages, ClaimOutcome, InboxQuery, InstanceRecord, JoinMembership, LeasePolicy,
-    MembershipRecord, MessageRecord, RepositoryError, SendMessage, Store,
+    MembershipRecord, MessageRecord, RepositoryError, SendMessage, SquadRecord, Store,
 };
 
 #[cfg(test)]
 use psst_core::{
     AgentId, DedupeKey, MemberName, MessageBody, MessagePriority, MessageSemantics, Mission, Role,
-    SquadName,
 };
 #[cfg(test)]
 use std::{
@@ -45,6 +45,7 @@ pub struct JoinAndClaim<'a> {
 
 pub struct JoinAndClaimOutcome {
     pub membership: MembershipRecord,
+    pub squad: SquadRecord,
     claim: ClaimOutcome,
 }
 
@@ -59,6 +60,26 @@ impl JoinAndClaimOutcome {
         let (instance, token) = self.claim.into_parts();
         (self.membership, instance, token)
     }
+    #[must_use]
+    pub fn into_session_parts(
+        self,
+    ) -> (MembershipRecord, SquadRecord, InstanceRecord, ResumeToken) {
+        let (instance, token) = self.claim.into_parts();
+        (self.membership, self.squad, instance, token)
+    }
+}
+
+#[derive(Debug)]
+pub struct SessionContext {
+    pub membership: MembershipRecord,
+    pub squad: SquadRecord,
+    pub instance: InstanceRecord,
+}
+
+#[derive(Debug)]
+pub struct LeaveOutcome {
+    pub membership_id: MembershipId,
+    pub left_at: UnixMillis,
 }
 
 #[cfg(test)]
@@ -207,7 +228,7 @@ impl AuthenticatedRaceTests {
                     now: race_millis(129),
                 };
                 leave_barrier.wait();
-                store.authenticated_leave(&session)
+                store.authenticated_leave(&session, &SquadName::new("alpha").unwrap())
             });
             let (resume_path, resume_barrier, resume_instance, resume_token) = (
                 path.clone(),
@@ -229,6 +250,7 @@ impl AuthenticatedRaceTests {
                     AvailabilitySource::Unknown,
                     race_millis(130),
                     LeasePolicy::new(Duration::from_millis(10), Duration::from_millis(30)).unwrap(),
+                    &SquadName::new("alpha").unwrap(),
                 )
             });
             let left = leave.join().unwrap();
@@ -300,6 +322,7 @@ impl AuthenticatedRaceTests {
                     AvailabilitySource::Unknown,
                     race_millis(130),
                     LeasePolicy::new(Duration::from_millis(10), Duration::from_millis(30)).unwrap(),
+                    &SquadName::new("alpha").unwrap(),
                 )
             });
             let sent = send_thread.join().unwrap();
@@ -332,6 +355,8 @@ struct Identity {
     last_seen: UnixMillis,
     created_at: UnixMillis,
 }
+
+type ResumeAuthorityRow = (Vec<u8>, String, Option<i64>, i64, String, String);
 
 // Every method returns the same stable RepositoryError surface documented on
 // RepositoryError; repeating that list on nine adjacent command boundaries
@@ -402,6 +427,7 @@ impl Store {
             request.lease_policy,
         )?;
         inject_join_claim_fault(fault, JoinClaimFault::Instance)?;
+        let squad_record = squad_by_id(&tx, &squad)?;
         tx.commit()?;
         let membership = MembershipRecord {
             id: request.membership.membership_id.clone(),
@@ -414,6 +440,7 @@ impl Store {
         };
         Ok(JoinAndClaimOutcome {
             membership,
+            squad: squad_record,
             claim: ClaimOutcome::new(instance, token),
         })
     }
@@ -555,11 +582,16 @@ impl Store {
     pub fn authenticated_leave(
         &mut self,
         session: &AuthenticatedSession<'_>,
-    ) -> Result<(), RepositoryError> {
+        expected_squad: &SquadName,
+    ) -> Result<LeaveOutcome, RepositoryError> {
         let tx = self
             .connection_mut()
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let identity = authorize_current(&tx, session)?;
+        let squad = squad_by_id(&tx, &identity.squad)?;
+        if &squad.name != expected_squad {
+            return Err(RepositoryError::NotFound);
+        }
         tx.execute(
             "UPDATE instances SET closed_at=?2 WHERE id=?1 AND closed_at IS NULL",
             params![session.instance_id.as_str(), session.now.as_i64()],
@@ -569,7 +601,10 @@ impl Store {
             params![identity.membership.as_str(), session.now.as_i64()],
         )?;
         tx.commit()?;
-        Ok(())
+        Ok(LeaveOutcome {
+            membership_id: identity.membership,
+            left_at: session.now,
+        })
     }
 
     pub fn authenticated_archive(
@@ -595,6 +630,35 @@ impl Store {
         Ok(())
     }
 
+    pub fn authenticated_archive_by_name(
+        &mut self,
+        session: &AuthenticatedSession<'_>,
+        squad_name: &SquadName,
+    ) -> Result<SquadRecord, RepositoryError> {
+        let tx = self
+            .connection_mut()
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let identity = authorize_current(&tx, session)?;
+        let squad = squad_by_name(&tx, squad_name)?;
+        if identity.squad != squad.id {
+            return Err(RepositoryError::NotMember);
+        }
+        if squad.state == SquadState::Archived {
+            return Err(RepositoryError::SquadArchived);
+        }
+        tx.execute(
+            "UPDATE squads SET state='archived', archived_at=?2 WHERE id=?1 AND state='active'",
+            params![squad.id.as_str(), session.now.as_i64()],
+        )?;
+        let result = SquadRecord {
+            state: SquadState::Archived,
+            archived_at: Some(session.now),
+            ..squad
+        };
+        tx.commit()?;
+        Ok(result)
+    }
+
     /// Rotates an expired/closed instance while retaining the continuity secret.
     #[allow(clippy::too_many_arguments)]
     pub fn authenticated_resume(
@@ -609,20 +673,32 @@ impl Store {
         source: AvailabilitySource,
         now: UnixMillis,
         policy: LeasePolicy,
-    ) -> Result<InstanceRecord, RepositoryError> {
+        expected_squad: &SquadName,
+    ) -> Result<SessionContext, RepositoryError> {
         validate_client(client_kind, hostname)?;
         validate_observation(availability, source, now)?;
         let tx = self
             .connection_mut()
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let prior: Option<(Vec<u8>, String, Option<i64>, i64)> = tx.query_row(
-            "SELECT i.resume_token_hash,i.membership_id,i.closed_at,i.lease_expires_at FROM instances i JOIN memberships m ON m.id=i.membership_id WHERE i.id=?1 AND m.left_at IS NULL",
-            [prior_instance.as_str()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
+        let prior: Option<ResumeAuthorityRow> = tx.query_row(
+            "SELECT i.resume_token_hash,i.membership_id,i.closed_at,i.lease_expires_at,s.name,s.state
+             FROM instances i JOIN memberships m ON m.id=i.membership_id
+             JOIN squads s ON s.id=m.squad_id WHERE i.id=?1 AND m.left_at IS NULL",
+            [prior_instance.as_str()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)),
         ).optional()?;
-        let Some((hash, membership, closed, expiry)) = prior else {
+        let Some((hash, membership, closed, expiry, squad_name, squad_state)) = prior else {
             return Err(RepositoryError::NotFound);
         };
         authenticate(&hash, token).map_err(|_| RepositoryError::NotFound)?;
+        if squad_name != expected_squad.as_str() {
+            return Err(RepositoryError::NotFound);
+        }
+        if squad_state == "archived" {
+            return Err(RepositoryError::SquadArchived);
+        }
+        if squad_state != "active" {
+            return Err(RepositoryError::InvalidStoredData);
+        }
         if closed.is_none() && now.as_i64() < expiry {
             return Err(RepositoryError::NameInUse);
         }
@@ -640,6 +716,8 @@ impl Store {
             return Err(RepositoryError::NameInUse);
         }
         tx.execute("UPDATE instances SET closed_at=COALESCE(closed_at,?2) WHERE membership_id=?1 AND closed_at IS NULL", params![membership.as_str(), now.as_i64()])?;
+        let membership_record = membership_by_id(&tx, &membership)?;
+        let squad = squad_by_id(&tx, &membership_record.squad_id)?;
         let result = insert_instance(
             &tx,
             new_instance,
@@ -654,8 +732,80 @@ impl Store {
             policy,
         )?;
         tx.commit()?;
-        Ok(result)
+        Ok(SessionContext {
+            membership: membership_record,
+            squad,
+            instance: result,
+        })
     }
+}
+
+fn squad_by_name(tx: &Transaction<'_>, name: &SquadName) -> Result<SquadRecord, RepositoryError> {
+    tx.query_row(
+        "SELECT id,name,mission,state,created_at,archived_at FROM squads WHERE name=?1",
+        [name.as_str()],
+        map_squad_row,
+    )
+    .optional()?
+    .ok_or(RepositoryError::NotFound)
+}
+fn squad_by_id(tx: &Transaction<'_>, id: &SquadId) -> Result<SquadRecord, RepositoryError> {
+    tx.query_row(
+        "SELECT id,name,mission,state,created_at,archived_at FROM squads WHERE id=?1",
+        [id.as_str()],
+        map_squad_row,
+    )
+    .optional()?
+    .ok_or(RepositoryError::NotFound)
+}
+fn map_squad_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SquadRecord> {
+    let state: String = row.get(3)?;
+    Ok(SquadRecord {
+        id: parse_value(&row.get::<_, String>(0)?)?,
+        name: parse_value(&row.get::<_, String>(1)?)?,
+        mission: parse_value(&row.get::<_, String>(2)?)?,
+        state: match state.as_str() {
+            "active" => SquadState::Active,
+            "archived" => SquadState::Archived,
+            _ => return Err(invalid_data()),
+        },
+        created_at: timestamp_value(row.get(4)?)?,
+        archived_at: optional_timestamp_value(row.get(5)?)?,
+    })
+}
+fn membership_by_id(
+    tx: &Transaction<'_>,
+    id: &MembershipId,
+) -> Result<MembershipRecord, RepositoryError> {
+    tx.query_row(
+        "SELECT id,squad_id,agent_id,name,role,joined_at,left_at FROM memberships WHERE id=?1",
+        [id.as_str()],
+        |r| {
+            Ok(MembershipRecord {
+                id: parse_value(&r.get::<_, String>(0)?)?,
+                squad_id: parse_value(&r.get::<_, String>(1)?)?,
+                agent_id: parse_value(&r.get::<_, String>(2)?)?,
+                name: parse_value(&r.get::<_, String>(3)?)?,
+                role: parse_value(&r.get::<_, String>(4)?)?,
+                joined_at: timestamp_value(r.get(5)?)?,
+                left_at: optional_timestamp_value(r.get(6)?)?,
+            })
+        },
+    )
+    .optional()?
+    .ok_or(RepositoryError::NotFound)
+}
+fn parse_value<T: std::str::FromStr>(value: &str) -> rusqlite::Result<T> {
+    value.parse().map_err(|_| invalid_data())
+}
+fn timestamp_value(value: i64) -> rusqlite::Result<UnixMillis> {
+    UnixMillis::new(value).map_err(|_| invalid_data())
+}
+fn optional_timestamp_value(value: Option<i64>) -> rusqlite::Result<Option<UnixMillis>> {
+    value.map(timestamp_value).transpose()
+}
+fn invalid_data() -> rusqlite::Error {
+    rusqlite::Error::InvalidQuery
 }
 
 fn authenticate_historical(
@@ -1034,7 +1184,9 @@ mod tests {
             created_at: millis(110),
         };
         store.authenticated_send(&session, &message).unwrap();
-        store.authenticated_leave(&session).unwrap();
+        store
+            .authenticated_leave(&session, &SquadName::new("alpha").unwrap())
+            .unwrap();
         assert_eq!(
             store.authenticated_send(&session, &message).unwrap().id,
             message.id
@@ -1160,7 +1312,7 @@ mod tests {
                 Err(RepositoryError::NotFound)
             ));
             assert!(matches!(
-                store.authenticated_leave(session),
+                store.authenticated_leave(session, &SquadName::new("alpha").unwrap()),
                 Err(RepositoryError::NotFound)
             ));
             assert!(matches!(
@@ -1217,7 +1369,7 @@ mod tests {
             Err(RepositoryError::LeaseExpired)
         ));
         assert!(matches!(
-            store.authenticated_leave(&expired),
+            store.authenticated_leave(&expired, &SquadName::new("alpha").unwrap()),
             Err(RepositoryError::LeaseExpired)
         ));
         assert!(matches!(
@@ -1251,7 +1403,8 @@ mod tests {
                 Availability::Unknown,
                 AvailabilitySource::Unknown,
                 millis(130),
-                policy
+                policy,
+                &SquadName::new("alpha").unwrap()
             ),
             Err(RepositoryError::NotFound)
         ));
@@ -1266,7 +1419,8 @@ mod tests {
                 Availability::Unknown,
                 AvailabilitySource::Unknown,
                 millis(130),
-                policy
+                policy,
+                &SquadName::new("alpha").unwrap()
             ),
             Err(RepositoryError::NotFound)
         ));
@@ -1281,7 +1435,8 @@ mod tests {
                 Availability::Unknown,
                 AvailabilitySource::Unknown,
                 millis(120),
-                policy
+                policy,
+                &SquadName::new("alpha").unwrap()
             ),
             Err(RepositoryError::NameInUse)
         ));
@@ -1298,9 +1453,10 @@ mod tests {
                 AvailabilitySource::Unknown,
                 millis(130),
                 policy,
+                &SquadName::new("alpha").unwrap(),
             )
             .unwrap();
-        assert_eq!(resumed.membership_id, member.id);
+        assert_eq!(resumed.instance.membership_id, member.id);
         assert!(matches!(
             store.authenticated_resume(
                 &instance.id,
@@ -1312,20 +1468,23 @@ mod tests {
                 Availability::Unknown,
                 AvailabilitySource::Unknown,
                 millis(140),
-                policy
+                policy,
+                &SquadName::new("alpha").unwrap()
             ),
             Err(RepositoryError::NameInUse)
         ));
 
         let resumed_session = AuthenticatedSession {
-            instance_id: &resumed.id,
+            instance_id: &resumed.instance.id,
             resume_token: &token,
             now: millis(140),
         };
-        store.authenticated_leave(&resumed_session).unwrap();
+        store
+            .authenticated_leave(&resumed_session, &SquadName::new("alpha").unwrap())
+            .unwrap();
         assert!(matches!(
             store.authenticated_resume(
-                &resumed.id,
+                &resumed.instance.id,
                 &token,
                 resume("ins_afterleave"),
                 AgentMode::Cooperative,
@@ -1334,7 +1493,8 @@ mod tests {
                 Availability::Unknown,
                 AvailabilitySource::Unknown,
                 millis(141),
-                policy
+                policy,
+                &SquadName::new("alpha").unwrap()
             ),
             Err(RepositoryError::NotFound)
         ));

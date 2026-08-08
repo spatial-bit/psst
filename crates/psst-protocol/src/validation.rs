@@ -310,12 +310,10 @@ mod tests {
             .validate()
             .is_err()
         );
-        let observed: ApiTimestamp = serde_json::from_str("\"2026-08-07T01:02:03.004Z\"").unwrap();
         assert!(
             HeartbeatRequest {
                 availability: AvailabilityDto::Idle,
-                availability_source: AvailabilitySourceDto::Unknown,
-                availability_observed_at: observed
+                availability_source: AvailabilitySourceDto::Unknown
             }
             .validate()
             .is_err()

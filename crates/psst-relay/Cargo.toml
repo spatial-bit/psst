@@ -9,9 +9,12 @@ repository.workspace = true
 
 [dependencies]
 axum.workspace = true
+getrandom.workspace = true
+psst-protocol = { path = "../psst-protocol" }
 psst-store = { path = "../psst-store" }
 psst-core = { path = "../psst-core" }
 serde.workspace = true
+time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

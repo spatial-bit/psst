@@ -184,7 +184,6 @@ response!(RosterResponse { squad: String, members: Vec<RosterMember> });
 pub struct HeartbeatRequest {
     pub availability: AvailabilityDto,
     pub availability_source: AvailabilitySourceDto,
-    pub availability_observed_at: ApiTimestamp,
 }
 response!(HeartbeatResponse {
     lease_expires_at: ApiTimestamp,
@@ -371,9 +370,7 @@ mod tests {
         );
         rt!(
             HeartbeatRequest,
-            &format!(
-                r#"{{"availability":"idle","availability_source":"session_lifecycle","availability_observed_at":"{TS}"}}"#
-            )
+            r#"{"availability":"idle","availability_source":"session_lifecycle"}"#
         );
         rt!(
             HeartbeatResponse,
@@ -432,7 +429,7 @@ mod tests {
         bad!(LeaveSquadRequest, r#"{"extra":1}"#);
         bad!(
             HeartbeatRequest,
-            r#"{"availability":"idle","availability_source":"tool_activity","availability_observed_at":"2026-08-07T01:02:03.004Z","extra":1}"#
+            r#"{"availability":"idle","availability_source":"tool_activity","extra":1}"#
         );
         bad!(
             SendMessageRequest,

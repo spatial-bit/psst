@@ -163,14 +163,11 @@ components:
       properties:
         availability:
           $ref: '#/components/schemas/AvailabilityDto'
-        availability_observed_at:
-          $ref: '#/components/schemas/ApiTimestamp'
         availability_source:
           $ref: '#/components/schemas/AvailabilitySourceDto'
       required:
       - availability
       - availability_source
-      - availability_observed_at
       type: object
     HeartbeatResponse:
       properties:

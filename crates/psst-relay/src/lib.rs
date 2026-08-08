@@ -1,5 +1,7 @@
 //! Bounded relay runtime. Product routes are intentionally added in later work units.
 
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::future::IntoFuture;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -19,19 +21,27 @@ use std::{
 use axum::{
     Json, Router,
     body::Body,
-    extract::{DefaultBodyLimit, State},
-    http::{Request, StatusCode},
+    extract::{DefaultBodyLimit, FromRequest, Path as AxumPath, State},
+    http::{HeaderMap, Request, StatusCode, header::AUTHORIZATION},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use psst_core::{
-    AgentMode, Availability, AvailabilitySource, InstanceId, MessageId, ResumeToken, SquadId,
-    UnixMillis,
+    AgentId, AgentMode, Availability, AvailabilitySource, InstanceId, MemberName, MembershipId,
+    MessageId, Mission, ResumeToken, Role, SquadId, SquadName, SquadState, UnixMillis,
+};
+use psst_protocol::{
+    AgentModeDto, ApiErrorCode, ApiTimestamp, ArchiveSquadRequest, ArchiveSquadResponse,
+    AvailabilityDto, AvailabilitySourceDto, CreateSquadRequest, ErrorBody, ErrorEnvelope,
+    HeartbeatRequest, HeartbeatResponse, IssuedSessionHeaders, JoinSquadRequest, LeaveSquadRequest,
+    LeaveSquadResponse, MembershipStateDto, ResumeSquadRequest, RosterResponse, SessionCredential,
+    SessionResponse, SquadStateDto, SquadSummary, TransportPresenceDto, Validate,
 };
 use psst_store::{
-    AuthenticatedSession, InstanceRecord, JoinAndClaim, JoinAndClaimOutcome, JoinMembership,
-    LeasePolicy, MessageRecord, RepositoryError, SendMessage, TranscriptQuery,
+    AuthenticatedSession, CreateSquad, InstanceRecord, JoinAndClaim, JoinAndClaimOutcome,
+    JoinMembership, LeasePolicy, LeaveOutcome, MembershipRecord, MessageRecord, RepositoryError,
+    RosterMember, SendMessage, SessionContext, SquadRecord, TranscriptQuery, TransportPresence,
 };
 use serde::Serialize;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -211,6 +221,19 @@ enum StoreCommand {
         WorkerJoin,
         oneshot::Sender<Result<JoinAndClaimOutcome, RepositoryError>>,
     ),
+    ListSquads(oneshot::Sender<Result<Vec<SquadRecord>, RepositoryError>>),
+    CreateSquad(
+        WorkerCreateSquad,
+        oneshot::Sender<Result<SquadRecord, RepositoryError>>,
+    ),
+    DescribeSquad(
+        SquadName,
+        oneshot::Sender<Result<SquadRecord, RepositoryError>>,
+    ),
+    Roster(
+        SquadName,
+        oneshot::Sender<Result<Vec<RosterMember>, RepositoryError>>,
+    ),
     Heartbeat(
         Credential,
         Availability,
@@ -238,15 +261,19 @@ enum StoreCommand {
         TranscriptQuery,
         oneshot::Sender<Result<Vec<MessageRecord>, RepositoryError>>,
     ),
-    Leave(Credential, oneshot::Sender<Result<(), RepositoryError>>),
+    Leave(
+        Credential,
+        SquadName,
+        oneshot::Sender<Result<LeaveOutcome, RepositoryError>>,
+    ),
     Archive(
         Credential,
-        SquadId,
-        oneshot::Sender<Result<(), RepositoryError>>,
+        SquadName,
+        oneshot::Sender<Result<SquadRecord, RepositoryError>>,
     ),
     Resume(
         WorkerResume,
-        oneshot::Sender<Result<InstanceRecord, RepositoryError>>,
+        oneshot::Sender<Result<SessionContext, RepositoryError>>,
     ),
     Ready(oneshot::Sender<Result<(), WorkerError>>),
     Checkpoint(oneshot::Sender<Result<(), WorkerError>>),
@@ -267,13 +294,17 @@ impl StoreCommand {
                 let _ = reply.send(Err(WorkerError::Unavailable));
             }
             Self::Join(_, reply) => drop(reply),
+            Self::ListSquads(reply) => drop(reply),
+            Self::CreateSquad(_, reply) => drop(reply),
+            Self::DescribeSquad(_, reply) => drop(reply),
+            Self::Roster(_, reply) => drop(reply),
             Self::Heartbeat(_, _, _, _, reply) => drop(reply),
             Self::Resume(_, reply) => drop(reply),
             Self::Send(_, _, reply) => drop(reply),
             Self::Pending(_, _, reply) => drop(reply),
             Self::Transcript(_, _, reply) => drop(reply),
             Self::Acknowledge(_, _, reply) => drop(reply),
-            Self::Leave(_, reply) => drop(reply),
+            Self::Leave(_, _, reply) => drop(reply),
             Self::Archive(_, _, reply) => drop(reply),
         }
     }
@@ -316,8 +347,15 @@ pub struct WorkerJoin {
     pub lease_policy: LeasePolicy,
 }
 
+pub struct WorkerCreateSquad {
+    pub id: SquadId,
+    pub name: SquadName,
+    pub mission: Mission,
+}
+
 pub struct WorkerResume {
     pub prior: Credential,
+    pub squad: SquadName,
     pub new_instance: InstanceId,
     pub mode: AgentMode,
     pub client_kind: String,
@@ -432,6 +470,24 @@ impl StoreWorker {
                             });
                             let _ = reply.send(result);
                         }
+                        StoreCommand::ListSquads(reply) => {
+                            let _ = reply.send(store.list_squads());
+                        }
+                        StoreCommand::CreateSquad(request, reply) => {
+                            let result = store.create_squad(&CreateSquad {
+                                id: request.id,
+                                name: request.name,
+                                mission: request.mission,
+                                created_at: clock.now(),
+                            });
+                            let _ = reply.send(result);
+                        }
+                        StoreCommand::DescribeSquad(name, reply) => {
+                            let _ = reply.send(store.describe_squad(&name));
+                        }
+                        StoreCommand::Roster(name, reply) => {
+                            let _ = reply.send(store.roster(&name, clock.now()));
+                        }
                         StoreCommand::Heartbeat(
                             credential,
                             availability,
@@ -465,13 +521,14 @@ impl StoreWorker {
                             let session = session(&credential, clock.now());
                             let _ = reply.send(store.authenticated_transcript(&session, &query));
                         }
-                        StoreCommand::Leave(credential, reply) => {
+                        StoreCommand::Leave(credential, squad, reply) => {
                             let session = session(&credential, clock.now());
-                            let _ = reply.send(store.authenticated_leave(&session));
+                            let _ = reply.send(store.authenticated_leave(&session, &squad));
                         }
                         StoreCommand::Archive(credential, squad, reply) => {
                             let session = session(&credential, clock.now());
-                            let _ = reply.send(store.authenticated_archive(&session, &squad));
+                            let _ =
+                                reply.send(store.authenticated_archive_by_name(&session, &squad));
                         }
                         StoreCommand::Resume(request, reply) => {
                             let _ = reply.send(store.authenticated_resume(
@@ -485,6 +542,7 @@ impl StoreWorker {
                                 request.availability_source,
                                 clock.now(),
                                 request.lease_policy,
+                                &request.squad,
                             ));
                         }
                         StoreCommand::Ready(reply) => {
@@ -560,6 +618,24 @@ impl StoreWorker {
         self.dispatch(|reply| StoreCommand::Join(request, reply))
             .await
     }
+    pub async fn list_squads(&self) -> Result<Vec<SquadRecord>, DispatchError> {
+        self.dispatch(StoreCommand::ListSquads).await
+    }
+    pub async fn create_squad(
+        &self,
+        request: WorkerCreateSquad,
+    ) -> Result<SquadRecord, DispatchError> {
+        self.dispatch(|reply| StoreCommand::CreateSquad(request, reply))
+            .await
+    }
+    pub async fn describe_squad(&self, name: SquadName) -> Result<SquadRecord, DispatchError> {
+        self.dispatch(|reply| StoreCommand::DescribeSquad(name, reply))
+            .await
+    }
+    pub async fn roster(&self, name: SquadName) -> Result<Vec<RosterMember>, DispatchError> {
+        self.dispatch(|reply| StoreCommand::Roster(name, reply))
+            .await
+    }
     pub async fn heartbeat(
         &self,
         credential: Credential,
@@ -604,19 +680,23 @@ impl StoreWorker {
         self.dispatch(|reply| StoreCommand::Transcript(credential, query, reply))
             .await
     }
-    pub async fn leave(&self, credential: Credential) -> Result<(), DispatchError> {
-        self.dispatch(|reply| StoreCommand::Leave(credential, reply))
+    pub async fn leave(
+        &self,
+        credential: Credential,
+        squad: SquadName,
+    ) -> Result<LeaveOutcome, DispatchError> {
+        self.dispatch(|reply| StoreCommand::Leave(credential, squad, reply))
             .await
     }
     pub async fn archive(
         &self,
         credential: Credential,
-        squad: SquadId,
-    ) -> Result<(), DispatchError> {
+        squad: SquadName,
+    ) -> Result<SquadRecord, DispatchError> {
         self.dispatch(|reply| StoreCommand::Archive(credential, squad, reply))
             .await
     }
-    pub async fn resume(&self, request: WorkerResume) -> Result<InstanceRecord, DispatchError> {
+    pub async fn resume(&self, request: WorkerResume) -> Result<SessionContext, DispatchError> {
         self.dispatch(|reply| StoreCommand::Resume(request, reply))
             .await
     }
@@ -729,6 +809,14 @@ pub fn router_with_limits(
         Router::new()
             .route("/healthz", get(health))
             .route("/readyz", get(ready))
+            .route("/v1/squads", get(list_squads).post(create_squad))
+            .route("/v1/squads/{squad}", get(describe_squad))
+            .route("/v1/squads/{squad}/archive", post(archive_squad))
+            .route("/v1/squads/{squad}/join", post(join_squad))
+            .route("/v1/squads/{squad}/resume", post(resume_squad))
+            .route("/v1/squads/{squad}/leave", post(leave_squad))
+            .route("/v1/squads/{squad}/roster", get(roster))
+            .route("/v1/heartbeat", post(heartbeat))
             .with_state(AppState { worker }),
         max_body,
         max_in_flight,
@@ -882,6 +970,414 @@ async fn ready(State(state): State<AppState>) -> (StatusCode, Json<StatusBody>) 
             }),
         ),
     }
+}
+
+#[derive(Debug)]
+struct ApiFailure(ApiErrorCode);
+
+struct ApiJson<T>(T);
+impl<S, T> FromRequest<S> for ApiJson<T>
+where
+    S: Send + Sync,
+    T: serde::de::DeserializeOwned,
+{
+    type Rejection = ApiFailure;
+    async fn from_request(request: Request<Body>, state: &S) -> Result<Self, Self::Rejection> {
+        Json::<T>::from_request(request, state)
+            .await
+            .map(|Json(value)| Self(value))
+            .map_err(|rejection| {
+                ApiFailure(if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                    ApiErrorCode::PayloadTooLarge
+                } else {
+                    ApiErrorCode::InvalidRequest
+                })
+            })
+    }
+}
+impl IntoResponse for ApiFailure {
+    fn into_response(self) -> Response {
+        let retryable = matches!(
+            self.0,
+            ApiErrorCode::RateLimited | ApiErrorCode::DatabaseBusy
+        );
+        let status =
+            StatusCode::from_u16(self.0.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let message = match self.0 {
+            ApiErrorCode::InvalidRequest => "The request is invalid.",
+            ApiErrorCode::NotFound => "The requested resource was not found.",
+            ApiErrorCode::SquadArchived => "The squad is archived.",
+            ApiErrorCode::NotMember => "The session is not an active member.",
+            ApiErrorCode::NameInUse => "The requested name is in use.",
+            ApiErrorCode::LeaseExpired => "The session lease has expired.",
+            ApiErrorCode::RecipientNotFound => "The recipient was not found.",
+            ApiErrorCode::IdempotencyConflict => "The idempotency key conflicts.",
+            ApiErrorCode::PayloadTooLarge => "The payload is too large.",
+            ApiErrorCode::RateLimited => "The relay is busy; retry later.",
+            ApiErrorCode::DatabaseBusy => "The database is busy; retry later.",
+            ApiErrorCode::InternalError => "The relay encountered an internal error.",
+        };
+        (
+            status,
+            Json(ErrorEnvelope {
+                error: ErrorBody {
+                    code: self.0,
+                    message: message.into(),
+                    retryable,
+                    details: BTreeMap::default(),
+                },
+            }),
+        )
+            .into_response()
+    }
+}
+
+impl From<DispatchError> for ApiFailure {
+    fn from(error: DispatchError) -> Self {
+        let code = match error {
+            DispatchError::RateLimited => ApiErrorCode::RateLimited,
+            DispatchError::Unavailable | DispatchError::Timeout => ApiErrorCode::DatabaseBusy,
+            DispatchError::Store(error) => match error.code() {
+                psst_core::ErrorCode::InvalidRequest => ApiErrorCode::InvalidRequest,
+                psst_core::ErrorCode::NotFound => ApiErrorCode::NotFound,
+                psst_core::ErrorCode::SquadArchived => ApiErrorCode::SquadArchived,
+                psst_core::ErrorCode::NotMember => ApiErrorCode::NotMember,
+                psst_core::ErrorCode::NameInUse => ApiErrorCode::NameInUse,
+                psst_core::ErrorCode::LeaseExpired => ApiErrorCode::LeaseExpired,
+                psst_core::ErrorCode::RecipientNotFound => ApiErrorCode::RecipientNotFound,
+                psst_core::ErrorCode::IdempotencyConflict => ApiErrorCode::IdempotencyConflict,
+                psst_core::ErrorCode::PayloadTooLarge => ApiErrorCode::PayloadTooLarge,
+                psst_core::ErrorCode::RateLimited => ApiErrorCode::RateLimited,
+                psst_core::ErrorCode::DatabaseBusy => ApiErrorCode::DatabaseBusy,
+                _ => ApiErrorCode::InternalError,
+            },
+        };
+        Self(code)
+    }
+}
+
+fn parsed<T>(value: Result<T, psst_core::InvalidValue>) -> Result<T, ApiFailure> {
+    value.map_err(|_| ApiFailure(ApiErrorCode::InvalidRequest))
+}
+fn credential(headers: &HeaderMap) -> Result<Credential, ApiFailure> {
+    if headers.get_all(AUTHORIZATION).iter().count() != 1 {
+        return Err(ApiFailure(ApiErrorCode::NotFound));
+    }
+    let value = headers
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .ok_or(ApiFailure(ApiErrorCode::NotFound))?;
+    let parsed = SessionCredential::parse_authorization(value)
+        .map_err(|_| ApiFailure(ApiErrorCode::NotFound))?;
+    Ok(Credential {
+        instance_id: parsed.instance_id().clone(),
+        resume_token: parsed.resume_token().clone(),
+    })
+}
+fn identifier<T>(
+    prefix: &str,
+    make: impl FnOnce(String) -> Result<T, psst_core::InvalidValue>,
+) -> Result<T, ApiFailure> {
+    let mut random = [0_u8; 16];
+    getrandom::fill(&mut random).map_err(|_| ApiFailure(ApiErrorCode::InternalError))?;
+    let suffix = random
+        .iter()
+        .fold(String::with_capacity(32), |mut output, byte| {
+            write!(output, "{byte:02x}").expect("writing to String cannot fail");
+            output
+        });
+    parsed(make(format!("{prefix}_{suffix}")))
+}
+fn timestamp(value: UnixMillis) -> Result<ApiTimestamp, ApiFailure> {
+    let nanos = i128::from(value.as_i64()) * 1_000_000;
+    let time = time::OffsetDateTime::from_unix_timestamp_nanos(nanos)
+        .map_err(|_| ApiFailure(ApiErrorCode::InternalError))?;
+    ApiTimestamp::new(time).map_err(|_| ApiFailure(ApiErrorCode::InternalError))
+}
+fn squad_dto(value: &SquadRecord) -> Result<SquadSummary, ApiFailure> {
+    Ok(SquadSummary {
+        id: value.id.to_string(),
+        name: value.name.to_string(),
+        mission: value.mission.to_string(),
+        state: match value.state {
+            SquadState::Active => SquadStateDto::Active,
+            SquadState::Archived => SquadStateDto::Archived,
+        },
+        created_at: timestamp(value.created_at)?,
+        archived_at: value.archived_at.map(timestamp).transpose()?,
+    })
+}
+fn mode(value: AgentModeDto) -> AgentMode {
+    match value {
+        AgentModeDto::Cooperative => AgentMode::Cooperative,
+        AgentModeDto::Scheduled => AgentMode::Scheduled,
+        AgentModeDto::Harnessed => AgentMode::Harnessed,
+    }
+}
+fn availability(value: AvailabilityDto) -> Availability {
+    match value {
+        AvailabilityDto::Idle => Availability::Idle,
+        AvailabilityDto::Busy => Availability::Busy,
+        AvailabilityDto::Blocked => Availability::Blocked,
+        AvailabilityDto::Unknown => Availability::Unknown,
+    }
+}
+fn availability_source(value: AvailabilitySourceDto) -> AvailabilitySource {
+    match value {
+        AvailabilitySourceDto::SessionLifecycle => AvailabilitySource::SessionLifecycle,
+        AvailabilitySourceDto::McpConnection => AvailabilitySource::McpConnection,
+        AvailabilitySourceDto::ToolActivity => AvailabilitySource::ToolActivity,
+        AvailabilitySourceDto::AgentReported => AvailabilitySource::AgentReported,
+        AvailabilitySourceDto::Unknown => AvailabilitySource::Unknown,
+    }
+}
+fn mode_dto(value: AgentMode) -> AgentModeDto {
+    match value {
+        AgentMode::Cooperative => AgentModeDto::Cooperative,
+        AgentMode::Scheduled => AgentModeDto::Scheduled,
+        AgentMode::Harnessed => AgentModeDto::Harnessed,
+    }
+}
+fn availability_dto(value: Availability) -> AvailabilityDto {
+    match value {
+        Availability::Idle => AvailabilityDto::Idle,
+        Availability::Busy => AvailabilityDto::Busy,
+        Availability::Blocked => AvailabilityDto::Blocked,
+        Availability::Unknown => AvailabilityDto::Unknown,
+    }
+}
+fn source_dto(value: AvailabilitySource) -> AvailabilitySourceDto {
+    match value {
+        AvailabilitySource::SessionLifecycle => AvailabilitySourceDto::SessionLifecycle,
+        AvailabilitySource::McpConnection => AvailabilitySourceDto::McpConnection,
+        AvailabilitySource::ToolActivity => AvailabilitySourceDto::ToolActivity,
+        AvailabilitySource::AgentReported => AvailabilitySourceDto::AgentReported,
+        AvailabilitySource::Unknown => AvailabilitySourceDto::Unknown,
+    }
+}
+fn seconds(value: Duration) -> Result<u32, ApiFailure> {
+    u32::try_from(value.as_secs()).map_err(|_| ApiFailure(ApiErrorCode::InternalError))
+}
+fn session_response(
+    membership: &MembershipRecord,
+    squad: &SquadRecord,
+    instance: &InstanceRecord,
+) -> Result<SessionResponse, ApiFailure> {
+    Ok(SessionResponse {
+        agent_id: membership.agent_id.to_string(),
+        membership_id: membership.id.to_string(),
+        instance_id: instance.id.to_string(),
+        squad: squad_dto(squad)?,
+        member_name: membership.name.to_string(),
+        role: membership.role.to_string(),
+        heartbeat_interval_seconds: seconds(instance.heartbeat_interval)?,
+        lease_seconds: seconds(instance.lease_duration)?,
+        lease_expires_at: timestamp(instance.lease_expires_at)?,
+    })
+}
+fn issued_response(
+    body: SessionResponse,
+    instance: &InstanceId,
+    token: &ResumeToken,
+) -> Result<Response, ApiFailure> {
+    let authority =
+        SessionCredential::parse_session_value(&format!("{instance}.{}", token.expose_encoded()))
+            .map_err(|_| ApiFailure(ApiErrorCode::InternalError))?;
+    let issued = IssuedSessionHeaders::new(&authority)
+        .map_err(|_| ApiFailure(ApiErrorCode::InternalError))?;
+    let mut response = Json(body).into_response();
+    issued.apply(response.headers_mut());
+    Ok(response)
+}
+
+async fn list_squads(State(state): State<AppState>) -> Result<Json<Vec<SquadSummary>>, ApiFailure> {
+    let values = state.worker.list_squads().await?;
+    Ok(Json(
+        values
+            .into_iter()
+            .map(|value| squad_dto(&value))
+            .collect::<Result<_, _>>()?,
+    ))
+}
+async fn create_squad(
+    State(state): State<AppState>,
+    ApiJson(request): ApiJson<CreateSquadRequest>,
+) -> Result<Json<SquadSummary>, ApiFailure> {
+    request
+        .validate()
+        .map_err(|_| ApiFailure(ApiErrorCode::InvalidRequest))?;
+    let result = state
+        .worker
+        .create_squad(WorkerCreateSquad {
+            id: identifier("sqd", SquadId::new)?,
+            name: parsed(SquadName::new(request.name))?,
+            mission: parsed(Mission::new(request.mission))?,
+        })
+        .await?;
+    Ok(Json(squad_dto(&result)?))
+}
+async fn describe_squad(
+    State(state): State<AppState>,
+    AxumPath(squad): AxumPath<String>,
+) -> Result<Json<SquadSummary>, ApiFailure> {
+    let result = state
+        .worker
+        .describe_squad(parsed(SquadName::new(squad))?)
+        .await?;
+    Ok(Json(squad_dto(&result)?))
+}
+async fn join_squad(
+    State(state): State<AppState>,
+    AxumPath(squad): AxumPath<String>,
+    ApiJson(request): ApiJson<JoinSquadRequest>,
+) -> Result<Response, ApiFailure> {
+    request
+        .validate()
+        .map_err(|_| ApiFailure(ApiErrorCode::InvalidRequest))?;
+    let squad_name = parsed(SquadName::new(squad))?;
+    let outcome = state
+        .worker
+        .join(WorkerJoin {
+            membership: JoinMembership {
+                squad_name,
+                mission_if_missing: request
+                    .mission
+                    .map(Mission::new)
+                    .transpose()
+                    .map_err(|_| ApiFailure(ApiErrorCode::InvalidRequest))?,
+                squad_id_if_missing: identifier("sqd", SquadId::new)?,
+                agent_id: identifier("agt", AgentId::new)?,
+                membership_id: identifier("mem", MembershipId::new)?,
+                member_name: parsed(MemberName::new(request.name))?,
+                role: parsed(Role::new(request.role))?,
+                joined_at: UnixMillis::new(0).expect("zero valid"),
+            },
+            instance_id: identifier("ins", InstanceId::new)?,
+            mode: mode(request.mode),
+            client_kind: request.client.kind,
+            hostname: request.client.hostname,
+            availability: Availability::Unknown,
+            availability_source: AvailabilitySource::Unknown,
+            lease_policy: LeasePolicy::default(),
+        })
+        .await?;
+    let (membership, squad, instance, token) = outcome.into_session_parts();
+    let body = session_response(&membership, &squad, &instance)?;
+    issued_response(body, &instance.id, &token)
+}
+async fn resume_squad(
+    State(state): State<AppState>,
+    AxumPath(squad): AxumPath<String>,
+    headers: HeaderMap,
+    ApiJson(request): ApiJson<ResumeSquadRequest>,
+) -> Result<Response, ApiFailure> {
+    request
+        .validate()
+        .map_err(|_| ApiFailure(ApiErrorCode::InvalidRequest))?;
+    let prior = credential(&headers)?;
+    let token = prior.resume_token.clone();
+    let context = state
+        .worker
+        .resume(WorkerResume {
+            prior,
+            squad: parsed(SquadName::new(squad))?,
+            new_instance: identifier("ins", InstanceId::new)?,
+            mode: mode(request.mode),
+            client_kind: request.client.kind,
+            hostname: request.client.hostname,
+            availability: Availability::Unknown,
+            availability_source: AvailabilitySource::Unknown,
+            lease_policy: LeasePolicy::default(),
+        })
+        .await?;
+    let body = session_response(&context.membership, &context.squad, &context.instance)?;
+    issued_response(body, &context.instance.id, &token)
+}
+async fn leave_squad(
+    State(state): State<AppState>,
+    AxumPath(squad): AxumPath<String>,
+    headers: HeaderMap,
+    ApiJson(_): ApiJson<LeaveSquadRequest>,
+) -> Result<Json<LeaveSquadResponse>, ApiFailure> {
+    let result = state
+        .worker
+        .leave(credential(&headers)?, parsed(SquadName::new(squad))?)
+        .await?;
+    Ok(Json(LeaveSquadResponse {
+        membership_id: result.membership_id.to_string(),
+        left_at: timestamp(result.left_at)?,
+    }))
+}
+async fn archive_squad(
+    State(state): State<AppState>,
+    AxumPath(squad): AxumPath<String>,
+    headers: HeaderMap,
+    ApiJson(_): ApiJson<ArchiveSquadRequest>,
+) -> Result<Json<ArchiveSquadResponse>, ApiFailure> {
+    let result = state
+        .worker
+        .archive(credential(&headers)?, parsed(SquadName::new(squad))?)
+        .await?;
+    Ok(Json(ArchiveSquadResponse {
+        squad: squad_dto(&result)?,
+    }))
+}
+async fn roster(
+    State(state): State<AppState>,
+    AxumPath(squad): AxumPath<String>,
+) -> Result<Json<RosterResponse>, ApiFailure> {
+    let name = parsed(SquadName::new(squad))?;
+    let members = state.worker.roster(name.clone()).await?;
+    let members = members
+        .into_iter()
+        .map(|value| {
+            Ok(psst_protocol::RosterMember {
+                membership_id: value.membership.id.to_string(),
+                name: value.membership.name.to_string(),
+                role: value.membership.role.to_string(),
+                membership_state: if value.membership.left_at.is_some() {
+                    MembershipStateDto::Left
+                } else {
+                    MembershipStateDto::Joined
+                },
+                presence: match value.presence {
+                    TransportPresence::Online => TransportPresenceDto::Online,
+                    TransportPresence::Offline => TransportPresenceDto::Offline,
+                },
+                availability: availability_dto(value.availability.availability()),
+                availability_source: source_dto(value.availability.source()),
+                availability_observed_at: timestamp(value.availability.observed_at())?,
+                mode: value.mode.map(mode_dto),
+                last_seen_at: value.last_seen_at.map(timestamp).transpose()?,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiFailure>>()?;
+    Ok(Json(RosterResponse {
+        squad: name.to_string(),
+        members,
+    }))
+}
+async fn heartbeat(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ApiJson(request): ApiJson<HeartbeatRequest>,
+) -> Result<Json<HeartbeatResponse>, ApiFailure> {
+    request
+        .validate()
+        .map_err(|_| ApiFailure(ApiErrorCode::InvalidRequest))?;
+    let record = state
+        .worker
+        .heartbeat(
+            credential(&headers)?,
+            availability(request.availability),
+            availability_source(request.availability_source),
+            LeasePolicy::default(),
+        )
+        .await?;
+    Ok(Json(HeartbeatResponse {
+        lease_expires_at: timestamp(record.lease_expires_at)?,
+        heartbeat_interval_seconds: seconds(record.heartbeat_interval)?,
+    }))
 }
 
 /// Runs until shutdown, then drains HTTP, checkpoints the store, and joins its worker.
@@ -1392,6 +1888,440 @@ mod tests {
         handle.join().unwrap().unwrap();
     }
 
+    async fn json_request(
+        app: Router,
+        request: Request<Body>,
+    ) -> (StatusCode, HeaderMap, serde_json::Value) {
+        let response = app.oneshot(request).await.unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = to_bytes(response.into_body(), 128 * 1024).await.unwrap();
+        let body = serde_json::from_slice(&bytes).unwrap();
+        (status, headers, body)
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn lifecycle_http_is_committed_path_bound_and_secret_safe() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let (worker, handle) = StoreWorker::start(&directory.path().join("psst.db"), 16).unwrap();
+        let app = router(worker.clone());
+        let (status, _, created) = json_request(
+            app.clone(),
+            Request::post("/v1/squads")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"created","mission":"explicit lifecycle"}"#,
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(created["name"], "created");
+        let (status, _, listed) = json_request(
+            app.clone(),
+            Request::get("/v1/squads").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            listed
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|squad| squad["name"] == "created")
+        );
+        let (status, _, described) = json_request(
+            app.clone(),
+            Request::get("/v1/squads/created")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(described["mission"], "explicit lifecycle");
+        let join_body = r#"{"name":"alice","role":"builder","mode":"cooperative","client":{"kind":"test"},"mission":"ship safely"}"#;
+        let (status, headers, joined) = json_request(
+            app.clone(),
+            Request::post("/v1/squads/alpha/join")
+                .header("content-type", "application/json")
+                .body(Body::from(join_body))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers.get("cache-control").unwrap(), "no-store");
+        assert!(
+            headers
+                .get("psst-session-credential")
+                .unwrap()
+                .is_sensitive()
+        );
+        let credential = headers
+            .get("psst-session-credential")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(!joined.to_string().contains(&credential));
+        assert_eq!(joined["squad"]["name"], "alpha");
+
+        let (status, _, roster_body) = json_request(
+            app.clone(),
+            Request::get("/v1/squads/alpha/roster")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(roster_body["members"][0]["name"], "alice");
+
+        let heartbeat_body = r#"{"availability":"busy","availability_source":"agent_reported"}"#;
+        let (status, _, heartbeat_body) = json_request(
+            app.clone(),
+            Request::post("/v1/heartbeat")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(heartbeat_body))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(heartbeat_body["heartbeat_interval_seconds"], 10);
+
+        let (status, _, wrong_path) = json_request(
+            app.clone(),
+            Request::post("/v1/squads/other/leave")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(!wrong_path.to_string().contains(&credential));
+
+        let resume_body = r#"{"mode":"cooperative","client":{"kind":"test"}}"#;
+        let (status, _, wrong_resume) = json_request(
+            app.clone(),
+            Request::post("/v1/squads/other/resume")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(resume_body))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(wrong_resume["error"]["code"], "not_found");
+
+        let (status, _, duplicate) = json_request(
+            app.clone(),
+            Request::post("/v1/heartbeat")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"availability":"busy","availability_source":"agent_reported"}"#,
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(duplicate["error"]["code"], "not_found");
+
+        let (_, leave_headers, _) = json_request(
+            app.clone(),
+            Request::post("/v1/squads/leavers/join")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"name":"leaver","role":"test","mode":"cooperative","client":{"kind":"test"},"mission":"leave"}"#))
+                .unwrap(),
+        )
+        .await;
+        let leave_credential = leave_headers
+            .get("psst-session-credential")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        let (status, _, left) = json_request(
+            app.clone(),
+            Request::post("/v1/squads/leavers/leave")
+                .header("authorization", format!("Bearer {leave_credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(left["membership_id"].as_str().unwrap().starts_with("mem_"));
+
+        let (status, _, archived) = json_request(
+            app.clone(),
+            Request::post("/v1/squads/alpha/archive")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(archived["squad"]["state"], "archived");
+        let (status, _, _) = json_request(
+            app.clone(),
+            Request::get("/v1/squads/alpha/roster")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "archived roster remains a trusted-LAN read"
+        );
+
+        let (status, _, missing) = json_request(app, Request::post("/v1/squads/missing/join").header("content-type", "application/json").body(Body::from(r#"{"name":"bob","role":"builder","mode":"cooperative","client":{"kind":"test"}}"#)).unwrap()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(missing["error"]["code"], "not_found");
+        let (status, _, malformed) = json_request(
+            router(worker.clone()),
+            Request::post("/v1/heartbeat")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"availability":"busy","availability_source":"agent_reported","unexpected":true}"#))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(malformed["error"]["code"], "invalid_request");
+        for request in [
+            Request::post("/v1/heartbeat")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{"))
+                .unwrap(),
+            Request::post("/v1/heartbeat")
+                .header("authorization", format!("Bearer {credential}"))
+                .body(Body::from(
+                    r#"{"availability":"busy","availability_source":"agent_reported"}"#,
+                ))
+                .unwrap(),
+            Request::post("/v1/heartbeat")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "text/plain")
+                .body(Body::from(
+                    r#"{"availability":"busy","availability_source":"agent_reported"}"#,
+                ))
+                .unwrap(),
+        ] {
+            let (status, _, body) = json_request(router(worker.clone()), request).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(body["error"]["code"], "invalid_request");
+        }
+        let oversized = "x".repeat(256);
+        let (status, _, oversized_body) = json_request(
+            router_with_limits(worker.clone(), 64, 8, Duration::from_secs(1)),
+            Request::post("/v1/heartbeat")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(r#"{{"availability":"busy","availability_source":"agent_reported","padding":"{oversized}"}}"#)))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(oversized_body["error"]["code"], "payload_too_large");
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn http_session_resumes_after_real_store_restart() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let path = directory.path().join("psst.db");
+        let (worker, handle) = StoreWorker::start_with_time(
+            &path,
+            8,
+            Duration::from_secs(1),
+            Arc::new(FakeTime(UnixMillis::new(100).unwrap())),
+        )
+        .unwrap();
+        let join = Request::post("/v1/squads/alpha/join")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"name":"alice","role":"builder","mode":"cooperative","client":{"kind":"test"},"mission":"restart"}"#))
+            .unwrap();
+        let (status, headers, joined) = json_request(router(worker.clone()), join).await;
+        assert_eq!(status, StatusCode::OK);
+        let old_instance = joined["instance_id"].as_str().unwrap().to_owned();
+        let credential = headers
+            .get("psst-session-credential")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+
+        let (worker, handle) = StoreWorker::start_with_time(
+            &path,
+            8,
+            Duration::from_secs(1),
+            Arc::new(FakeTime(UnixMillis::new(40_000).unwrap())),
+        )
+        .unwrap();
+        let resume = Request::post("/v1/squads/alpha/resume")
+            .header("authorization", format!("Bearer {credential}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"mode":"harnessed","client":{"kind":"test"}}"#,
+            ))
+            .unwrap();
+        let (status, headers, resumed) = json_request(router(worker.clone()), resume).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_ne!(resumed["instance_id"], old_instance);
+        assert_eq!(headers.get("cache-control").unwrap(), "no-store");
+        assert!(
+            !resumed.to_string().contains(
+                headers
+                    .get("psst-session-credential")
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+            )
+        );
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn lifecycle_http_authorization_matrix_is_concealed_and_expiry_is_stable() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let path = directory.path().join("psst.db");
+        let (worker, handle) = StoreWorker::start_with_time(
+            &path,
+            16,
+            Duration::from_secs(1),
+            Arc::new(FakeTime(UnixMillis::new(100).unwrap())),
+        )
+        .unwrap();
+        let app = router(worker.clone());
+        let join = Request::post("/v1/squads/alpha/join")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"name":"alice","role":"builder","mode":"cooperative","client":{"kind":"test"},"mission":"matrix"}"#))
+            .unwrap();
+        let (_, headers, _) = json_request(app.clone(), join).await;
+        let valid = headers
+            .get("psst-session-credential")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let (valid_instance, valid_token) = valid.split_once('.').unwrap();
+        let replacement = if valid_token.starts_with('A') {
+            'B'
+        } else {
+            'A'
+        };
+        let mut wrong_token = valid_token.to_owned();
+        wrong_token.replace_range(..1, &replacement.to_string());
+        let wrong_token_authority = format!("Bearer {valid_instance}.{wrong_token}");
+        let nonexistent_authority = format!("Bearer ins_nonexistent.{valid_token}");
+        let cases = [
+            (
+                "/v1/heartbeat",
+                r#"{"availability":"busy","availability_source":"agent_reported"}"#,
+            ),
+            ("/v1/squads/alpha/leave", "{}"),
+            ("/v1/squads/alpha/archive", "{}"),
+            (
+                "/v1/squads/alpha/resume",
+                r#"{"mode":"cooperative","client":{"kind":"test"}}"#,
+            ),
+        ];
+        for (path, body) in cases {
+            for authority in [
+                None,
+                Some("Bearer malformed"),
+                Some(wrong_token_authority.as_str()),
+                Some(nonexistent_authority.as_str()),
+                Some("duplicate"),
+            ] {
+                let mut request = Request::post(path)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap();
+                if let Some(value) = authority {
+                    if value == "duplicate" {
+                        request
+                            .headers_mut()
+                            .append(AUTHORIZATION, format!("Bearer {valid}").parse().unwrap());
+                        request
+                            .headers_mut()
+                            .append(AUTHORIZATION, format!("Bearer {valid}").parse().unwrap());
+                    } else {
+                        request
+                            .headers_mut()
+                            .append(AUTHORIZATION, value.parse().unwrap());
+                    }
+                }
+                let (status, _, body) = json_request(app.clone(), request).await;
+                assert_eq!(status, StatusCode::NOT_FOUND, "{path} {authority:?}");
+                assert_eq!(body["error"]["code"], "not_found");
+                assert!(!body.to_string().contains(&valid));
+                assert!(!body.to_string().contains(&wrong_token));
+                assert!(!body.to_string().contains(valid_token));
+            }
+        }
+        let beta_join = Request::post("/v1/squads/beta/join")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"name":"bob","role":"builder","mode":"cooperative","client":{"kind":"test"},"mission":"other"}"#))
+            .unwrap();
+        let (_, beta_headers, _) = json_request(app.clone(), beta_join).await;
+        let beta = beta_headers
+            .get("psst-session-credential")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        for (path, expected_status, expected_code) in [
+            ("/v1/squads/alpha/leave", StatusCode::NOT_FOUND, "not_found"),
+            (
+                "/v1/squads/alpha/archive",
+                StatusCode::FORBIDDEN,
+                "not_member",
+            ),
+        ] {
+            let request = Request::post(path)
+                .header("authorization", format!("Bearer {beta}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap();
+            let (status, _, body) = json_request(app.clone(), request).await;
+            assert_eq!(status, expected_status);
+            assert_eq!(body["error"]["code"], expected_code);
+        }
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+
+        let (worker, handle) = StoreWorker::start_with_time(
+            &path,
+            16,
+            Duration::from_secs(1),
+            Arc::new(FakeTime(UnixMillis::new(40_000).unwrap())),
+        )
+        .unwrap();
+        let app = router(worker.clone());
+        for (path, body) in &cases[..3] {
+            let request = Request::post(*path)
+                .header("authorization", format!("Bearer {valid}"))
+                .header("content-type", "application/json")
+                .body(Body::from(*body))
+                .unwrap();
+            let (status, _, body) = json_request(app.clone(), request).await;
+            assert_eq!(status, StatusCode::CONFLICT, "{path}");
+            assert_eq!(body["error"]["code"], "lease_expired");
+        }
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+    }
+
     async fn raw_get(address: SocketAddr, path: &str) -> String {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
@@ -1405,6 +2335,89 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response).await.unwrap();
         response
+    }
+
+    async fn raw_post(
+        address: SocketAddr,
+        path: &str,
+        authorization: Option<&str>,
+        body: &str,
+    ) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        let authorization = authorization.map_or_else(String::new, |value| {
+            format!("Authorization: Bearer {value}\r\n")
+        });
+        let request = format!(
+            "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n{authorization}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        response
+    }
+
+    fn response_header<'a>(response: &'a str, name: &str) -> Option<&'a str> {
+        response.lines().find_map(|line| {
+            let (header, value) = line.split_once(':')?;
+            header.eq_ignore_ascii_case(name).then(|| value.trim())
+        })
+    }
+
+    #[tokio::test]
+    async fn bound_http_clients_serialize_name_claim_and_archive_leave_race() {
+        let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = reservation.local_addr().unwrap();
+        drop(reservation);
+        let directory = tempfile::TempDir::new().unwrap();
+        let mut config = RelayConfig::local(directory.path().join("psst.db"));
+        config.bind = address;
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let task = tokio::spawn(serve(config, shutdown_rx));
+        let mut connected = false;
+        for _ in 0..50 {
+            if tokio::net::TcpStream::connect(address).await.is_ok() {
+                connected = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(connected, "relay did not bind before raw clients started");
+        let body = r#"{"name":"same","role":"builder","mode":"cooperative","client":{"kind":"test"},"mission":"race"}"#;
+        let (first, second) = tokio::join!(
+            raw_post(address, "/v1/squads/alpha/join", None, body),
+            raw_post(address, "/v1/squads/alpha/join", None, body)
+        );
+        let statuses = [
+            first.starts_with("HTTP/1.1 200"),
+            second.starts_with("HTTP/1.1 200"),
+        ];
+        assert_eq!(statuses.into_iter().filter(|success| *success).count(), 1);
+        let conflict = if statuses[0] { &second } else { &first };
+        assert!(conflict.starts_with("HTTP/1.1 409"));
+        assert!(conflict.contains("name_in_use"));
+        let successful = if statuses[0] { &first } else { &second };
+        let credential = response_header(successful, "psst-session-credential").unwrap();
+
+        let (archive, leave) = tokio::join!(
+            raw_post(address, "/v1/squads/alpha/archive", Some(credential), "{}"),
+            raw_post(address, "/v1/squads/alpha/leave", Some(credential), "{}")
+        );
+        let successes = [archive.as_str(), leave.as_str()]
+            .into_iter()
+            .filter(|response| response.starts_with("HTTP/1.1 200"))
+            .count();
+        assert_eq!(successes, 1);
+        let loser = if archive.starts_with("HTTP/1.1 200") {
+            &leave
+        } else {
+            &archive
+        };
+        assert!(loser.starts_with("HTTP/1.1 403") || loser.starts_with("HTTP/1.1 409"));
+        assert!(loser.contains("not_member") || loser.contains("squad_archived"));
+        shutdown_tx.send(true).unwrap();
+        task.await.unwrap().unwrap();
     }
 
     #[tokio::test]

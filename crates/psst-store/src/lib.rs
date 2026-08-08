@@ -12,7 +12,10 @@ mod instance;
 mod message;
 mod repository;
 
-pub use authenticated::{AuthenticatedSession, JoinAndClaim, JoinAndClaimOutcome, TranscriptQuery};
+pub use authenticated::{
+    AuthenticatedSession, JoinAndClaim, JoinAndClaimOutcome, LeaveOutcome, SessionContext,
+    TranscriptQuery,
+};
 pub use inbox::{
     AcknowledgeMessages, InboxQuery, MAX_ACK_MESSAGES, MAX_INBOX_MESSAGES, MAX_INBOX_OUTPUT_BYTES,
 };
