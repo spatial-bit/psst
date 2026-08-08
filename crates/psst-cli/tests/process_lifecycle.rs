@@ -75,7 +75,17 @@ fn test_platform_paths(state: &std::path::Path) -> psst_application::PlatformPat
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn test_platform_paths(state: &std::path::Path) -> psst_application::PlatformPaths {
+    let root = state.join("home/Library/Application Support/psst");
+    psst_application::PlatformPaths {
+        config_dir: root.clone(),
+        data_dir: root.clone(),
+        runtime_dir: root.join("runtime"),
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 fn test_platform_paths(state: &std::path::Path) -> psst_application::PlatformPaths {
     psst_application::PlatformPaths {
         config_dir: state.join("config/psst"),
@@ -312,34 +322,22 @@ fn wait_for_profile_lock(
     listener: &mut Child,
     origin: &str,
     profile: &str,
-    config: &std::path::Path,
+    _config: &std::path::Path,
     state: &std::path::Path,
 ) {
+    let roots = test_platform_paths(state);
+    let lock = psst_application::ProfilePaths::for_profile(&roots, origin, profile)
+        .unwrap()
+        .lock;
     let deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < deadline {
         assert!(
             listener.try_wait().unwrap().is_none(),
             "listen exited before acquiring its profile lock"
         );
-        let mut command = Command::new(env!("CARGO_BIN_EXE_psst"));
-        command
-            .args([
-                "--json",
-                "--relay",
-                origin,
-                "--profile",
-                profile,
-                "--config",
-            ])
-            .arg(config)
-            .args(["status"])
-            .stdin(Stdio::null());
-        configure_client_roots(&mut command, state);
-        let output = command.output().unwrap();
-        if !output.status.success()
-            && serde_json::from_slice::<Value>(&output.stderr)
-                .is_ok_and(|value| value["error"]["code"] == "profile_locked")
-        {
+        // Every lifecycle test gets a fresh platform root, so only this listener can create the
+        // profile-specific lock file. Observing it avoids racing the listener for its kernel lock.
+        if lock.is_file() {
             return;
         }
         thread::sleep(Duration::from_millis(25));
