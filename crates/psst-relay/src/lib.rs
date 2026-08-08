@@ -37,10 +37,10 @@ use psst_protocol::{
     ArchiveSquadRequest, ArchiveSquadResponse, AvailabilityDto, AvailabilitySourceDto,
     CreateSquadRequest, ErrorBody, ErrorEnvelope, HeartbeatRequest, HeartbeatResponse, InboxQuery,
     InboxResponse, IssuedSessionHeaders, JoinSquadRequest, LeaveSquadRequest, LeaveSquadResponse,
-    MembershipStateDto, MessageDto, MessagePriorityDto, MessageSequence, ResumeSquadRequest,
-    RosterResponse, SendMessageRequest, SendMessageResponse, SessionCredential, SessionResponse,
-    SquadStateDto, SquadSummary, TranscriptQuery, TranscriptResponse, TransportPresenceDto,
-    Validate, encode_bounded_inbox,
+    MembershipStateDto, MessageDto, MessagePriorityDto, MessageSequence, ReadyResponse,
+    ResumeSquadRequest, RosterResponse, SendMessageRequest, SendMessageResponse, SessionCredential,
+    SessionResponse, SquadStateDto, SquadSummary, TranscriptQuery, TranscriptResponse,
+    TransportPresenceDto, Validate, encode_bounded_inbox,
 };
 use psst_store::{
     AuthenticatedSession, CreateSquad, InboxPage, InstanceRecord, JoinAndClaim,
@@ -1175,13 +1175,20 @@ fn inbox_wait_allowance(uri: &axum::http::Uri) -> Option<Duration> {
 async fn health() -> Json<StatusBody> {
     Json(StatusBody { status: "ok" })
 }
-async fn ready(State(state): State<AppState>) -> (StatusCode, Json<StatusBody>) {
+async fn ready(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse>) {
     match state.worker.ready().await {
-        Ok(()) => (StatusCode::OK, Json(StatusBody { status: "ready" })),
+        Ok(()) => (
+            StatusCode::OK,
+            Json(ReadyResponse {
+                status: "ready".into(),
+                schema_version: psst_store::current_schema_version(),
+            }),
+        ),
         Err(_) => (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(StatusBody {
-                status: "unavailable",
+            Json(ReadyResponse {
+                status: "unavailable".into(),
+                schema_version: psst_store::current_schema_version(),
             }),
         ),
     }

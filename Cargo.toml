@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/psst-core", "crates/psst-protocol", "crates/psst-store", "crates/psst-relay"]
+members = ["crates/psst-core", "crates/psst-protocol", "crates/psst-store", "crates/psst-relay", "crates/psst-client"]
 
 [workspace.package]
 version = "0.0.0"
@@ -27,6 +27,7 @@ tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "net", "s
 tower = { version = "0.5.2", features = ["util", "limit"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
+reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

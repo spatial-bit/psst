@@ -58,6 +58,16 @@ const MIGRATIONS: &[Migration] = &[
     },
 ];
 
+/// Returns the schema version embedded in this build.
+///
+/// # Panics
+/// Panics only when the compile-time migration table contains a version outside `u32`.
+#[must_use]
+pub fn current_schema_version() -> u32 {
+    u32::try_from(MIGRATIONS.last().map_or(0, |migration| migration.version))
+        .expect("validated migration versions fit u32")
+}
+
 /// Errors that can prevent a store from opening safely.
 #[derive(Debug)]
 pub enum StoreError {
