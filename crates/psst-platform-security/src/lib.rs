@@ -1,5 +1,6 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+#[cfg(windows)]
 use std::{fs::File, io};
 
 /// Opens and pins a local directory with relative-child creation/replacement rights.
