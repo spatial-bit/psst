@@ -627,7 +627,7 @@ mod tests {
             assert_eq!(
                 fs::metadata(store.path()).unwrap().permissions().mode() & 0o077,
                 0
-            )
+            );
         }
     }
     #[test]

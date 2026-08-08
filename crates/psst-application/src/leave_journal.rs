@@ -11,10 +11,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[cfg(unix)]
-use std::fs::OpenOptions;
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
 const VERSION: u32 = 1;
 const MAX_JOURNAL_BYTES: u64 = 16 * 1024;
 
@@ -444,25 +440,15 @@ impl LeaveJournalStore {
     }
 }
 
+#[cfg(windows)]
 fn open_directory(path: &Path) -> io::Result<File> {
-    #[cfg(unix)]
-    {
-        let mut options = OpenOptions::new();
-        options
-            .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
-        options.open(path)
+    use std::os::windows::fs::MetadataExt;
+    let directory = psst_platform_security::open_pinned_directory(path)?;
+    let metadata = directory.metadata()?;
+    if !metadata.is_dir() || metadata.file_attributes() & 0x400 != 0 {
+        return Err(substitution());
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        let directory = psst_platform_security::open_pinned_directory(path)?;
-        let metadata = directory.metadata()?;
-        if !metadata.is_dir() || metadata.file_attributes() & 0x400 != 0 {
-            return Err(substitution());
-        }
-        Ok(directory)
-    }
+    Ok(directory)
 }
 
 #[cfg(unix)]
@@ -583,6 +569,7 @@ fn injected() -> io::Error {
     io::Error::other("injected leave journal fault")
 }
 #[allow(clippy::needless_pass_by_value)]
+#[cfg(windows)]
 fn staged(stage: &str, error: io::Error) -> io::Error {
     io::Error::new(
         error.kind(),
