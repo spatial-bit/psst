@@ -2,15 +2,17 @@ use serde_json::Value;
 use std::{
     io::{BufRead, BufReader, Read, Write},
     process::{Command, Stdio},
-    sync::mpsc,
+    sync::{Mutex, MutexGuard, mpsc},
     thread,
     time::{Duration, Instant},
 };
 
+static CHILD_SERIAL: Mutex<()> = Mutex::new(());
+
 #[test]
 #[allow(clippy::too_many_lines)] // One ordered transcript proves negotiation through shutdown.
 fn pinned_sdk_completes_initialize_ping_and_clean_stdio_shutdown() {
-    let (_root, mut child) = isolated_child("w306-handshake");
+    let (_serial, _root, mut child) = isolated_child("w306-handshake");
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = ProtocolReader::new(child.stdout.take().unwrap());
 
@@ -154,7 +156,7 @@ fn pinned_sdk_completes_initialize_ping_and_clean_stdio_shutdown() {
 
 #[test]
 fn oversized_input_fails_closed_without_reflecting_hostile_content() {
-    let (_root, mut child) = isolated_child("w306-oversized");
+    let (_serial, _root, mut child) = isolated_child("w306-oversized");
     let mut stdin = child.stdin.take().unwrap();
     let hostile = "HOSTILE-CANARY-DO-NOT-REFLECT";
     stdin.write_all(hostile.as_bytes()).unwrap();
@@ -176,7 +178,7 @@ fn oversized_input_fails_closed_without_reflecting_hostile_content() {
 
 #[test]
 fn malformed_json_fails_closed_with_protocol_pure_stdout() {
-    let (_root, mut child) = isolated_child("w306-malformed");
+    let (_serial, _root, mut child) = isolated_child("w306-malformed");
     let mut stdin = child.stdin.take().unwrap();
     stdin.write_all(b"{not-json}\n").unwrap();
     drop(stdin);
@@ -189,7 +191,7 @@ fn malformed_json_fails_closed_with_protocol_pure_stdout() {
 
 #[test]
 fn unknown_method_is_a_json_rpc_protocol_failure() {
-    let (_root, mut child) = isolated_child("w306-unknown-method");
+    let (_serial, _root, mut child) = isolated_child("w306-unknown-method");
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = ProtocolReader::new(child.stdout.take().unwrap());
     writeln!(
@@ -232,8 +234,33 @@ fn unknown_method_is_a_json_rpc_protocol_failure() {
     assert!(output.stderr.is_empty());
 }
 
-fn isolated_child(profile: &str) -> (tempfile::TempDir, std::process::Child) {
+fn isolated_child(
+    profile: &str,
+) -> (
+    MutexGuard<'static, ()>,
+    tempfile::TempDir,
+    std::process::Child,
+) {
+    // Cooperative startup acquires an OS-backed profile lock whose bounded endpoint namespace can
+    // conservatively collide across unrelated profiles. Serialize these child-process protocol
+    // tests so startup is deterministic and each assertion reaches the intended stdio boundary.
+    let serial = CHILD_SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let root = tempfile::tempdir().unwrap();
+    #[cfg(windows)]
+    let platform_roots = [root.path().to_path_buf()];
+    #[cfg(target_os = "macos")]
+    let platform_roots = [root.path().join("Library/Application Support/psst/runtime")];
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let platform_roots = [
+        root.path().join("config/psst"),
+        root.path().join("data/psst"),
+        root.path().join("runtime/psst"),
+    ];
+    for path in platform_roots {
+        std::fs::create_dir_all(path).unwrap();
+    }
     let mut command = Command::new(env!("CARGO_BIN_EXE_psst-mcp"));
     for key in [
         "PSST_RELAY",
@@ -263,7 +290,7 @@ fn isolated_child(profile: &str) -> (tempfile::TempDir, std::process::Child) {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let child = command.spawn().unwrap();
-    (root, child)
+    (serial, root, child)
 }
 
 fn wait_for_exit(
