@@ -54,7 +54,96 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot, watch};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 pub const DEFAULT_QUEUE_CAPACITY: usize = 256;
+const MAX_INBOX_WAITERS: usize = 128;
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+
+struct NotificationRegistry {
+    entries: Mutex<BTreeMap<String, NotificationEntry>>,
+    permits: Arc<Semaphore>,
+}
+
+struct NotificationEntry {
+    generation: watch::Sender<u64>,
+    registrations: usize,
+}
+
+struct NotificationSubscription {
+    registry: Arc<NotificationRegistry>,
+    key: String,
+    receiver: watch::Receiver<u64>,
+    _permit: OwnedSemaphorePermit,
+}
+
+impl NotificationRegistry {
+    fn bounded() -> Arc<Self> {
+        Arc::new(Self {
+            entries: Mutex::new(BTreeMap::new()),
+            permits: Arc::new(Semaphore::new(MAX_INBOX_WAITERS)),
+        })
+    }
+
+    fn subscribe(self: &Arc<Self>, membership: &MembershipId) -> Option<NotificationSubscription> {
+        let permit = Arc::clone(&self.permits).try_acquire_owned().ok()?;
+        let key = membership.to_string();
+        let mut entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let entry = entries.entry(key.clone()).or_insert_with(|| {
+            let (generation, _) = watch::channel(0);
+            NotificationEntry {
+                generation,
+                registrations: 0,
+            }
+        });
+        entry.registrations += 1;
+        let receiver = entry.generation.subscribe();
+        Some(NotificationSubscription {
+            registry: Arc::clone(self),
+            key,
+            receiver,
+            _permit: permit,
+        })
+    }
+
+    fn notify(&self, membership: &MembershipId) {
+        let entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(entry) = entries.get(membership.as_str()) {
+            entry
+                .generation
+                .send_modify(|value| *value = value.wrapping_add(1));
+        }
+    }
+
+    #[cfg(test)]
+    fn registration_count(&self) -> usize {
+        self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .map(|entry| entry.registrations)
+            .sum()
+    }
+}
+
+impl Drop for NotificationSubscription {
+    fn drop(&mut self) {
+        let mut entries = self
+            .registry
+            .entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(entry) = entries.get_mut(&self.key) {
+            entry.registrations -= 1;
+            if entry.registrations == 0 {
+                entries.remove(&self.key);
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum LogFormat {
@@ -331,6 +420,7 @@ enum SendFailure {
 }
 
 /// Owned adapter credential used only across the in-process worker boundary.
+#[derive(Clone)]
 pub struct Credential {
     pub instance_id: InstanceId,
     pub resume_token: ResumeToken,
@@ -390,6 +480,9 @@ struct WorkerInner {
     accepting: AtomicBool,
     request_timeout: Duration,
     shutdown: Arc<AtomicBool>,
+    notifications: Arc<NotificationRegistry>,
+    #[cfg(test)]
+    inbox_gap: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
 }
 
 #[allow(clippy::missing_errors_doc)]
@@ -440,6 +533,8 @@ impl StoreWorker {
         let store = psst_store::Store::open(path)?;
         let (sender, receiver) = mpsc::sync_channel::<StoreCommand>(capacity);
         let shutdown = Arc::new(AtomicBool::new(false));
+        let notifications = NotificationRegistry::bounded();
+        let worker_notifications = Arc::clone(&notifications);
         let worker_shutdown = Arc::clone(&shutdown);
         let handle = std::thread::Builder::new()
             .name("psst-sqlite".into())
@@ -529,6 +624,10 @@ impl StoreWorker {
                             let now = clock.now();
                             let session = session(&credential, now);
                             let result = store.authenticated_send_by_name(&session, &request);
+                            if let Ok(outcome) = &result {
+                                worker_notifications
+                                    .notify(&outcome.message.message.semantics.recipient);
+                            }
                             #[cfg(test)]
                             let delayed_completion =
                                 next_send_reply_delay.take().map(|(delay, completed)| {
@@ -600,6 +699,9 @@ impl StoreWorker {
                     accepting: AtomicBool::new(true),
                     request_timeout,
                     shutdown,
+                    notifications,
+                    #[cfg(test)]
+                    inbox_gap: Mutex::new(None),
                 }),
             },
             handle,
@@ -745,6 +847,32 @@ impl StoreWorker {
             .await
     }
 
+    #[cfg(test)]
+    fn pause_next_inbox_after_preflight(&self) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        *self
+            .inner
+            .inbox_gap
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((started_tx, release_rx));
+        (started_rx, release_tx)
+    }
+
+    #[cfg(test)]
+    async fn inbox_preflight_barrier(&self) {
+        let hook = self
+            .inner
+            .inbox_gap
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some((started, release)) = hook {
+            let _ = started.send(());
+            let _ = release.await;
+        }
+    }
+
     async fn request(
         &self,
         make: impl FnOnce(oneshot::Sender<Result<(), WorkerError>>) -> StoreCommand,
@@ -832,6 +960,7 @@ impl std::error::Error for DispatchError {
 #[derive(Clone)]
 struct AppState {
     worker: StoreWorker,
+    shutdown: watch::Receiver<bool>,
 }
 
 #[derive(Serialize)]
@@ -840,7 +969,8 @@ struct StatusBody {
 }
 
 pub fn router(worker: StoreWorker) -> Router {
-    router_with_limits(worker, 512 * 1024, 128, Duration::from_secs(5))
+    let (_shutdown, receiver) = watch::channel(false);
+    router_with_limits_and_shutdown(worker, 512 * 1024, 128, Duration::from_secs(5), receiver)
 }
 
 pub fn router_with_limits(
@@ -848,6 +978,17 @@ pub fn router_with_limits(
     max_body: usize,
     max_in_flight: usize,
     timeout: Duration,
+) -> Router {
+    let (_shutdown, receiver) = watch::channel(false);
+    router_with_limits_and_shutdown(worker, max_body, max_in_flight, timeout, receiver)
+}
+
+fn router_with_limits_and_shutdown(
+    worker: StoreWorker,
+    max_body: usize,
+    max_in_flight: usize,
+    timeout: Duration,
+    shutdown: watch::Receiver<bool>,
 ) -> Router {
     apply_limits(
         Router::new()
@@ -865,7 +1006,7 @@ pub fn router_with_limits(
             .route("/v1/inbox", get(inbox))
             .route("/v1/messages/ack", post(acknowledge_messages))
             .route("/v1/squads/{squad}/transcript", get(transcript))
-            .with_state(AppState { worker }),
+            .with_state(AppState { worker, shutdown }),
         max_body,
         max_in_flight,
         timeout,
@@ -1000,9 +1141,35 @@ async fn request_trace(request: Request<Body>, next: Next) -> Response {
 }
 
 async fn request_deadline(request: Request<Body>, next: Next, timeout: Duration) -> Response {
+    let allowance = inbox_wait_allowance(request.uri()).unwrap_or_default();
+    let timeout = timeout.saturating_add(allowance);
     tokio::time::timeout(timeout, next.run(request))
         .await
         .unwrap_or_else(|_| StatusCode::REQUEST_TIMEOUT.into_response())
+}
+
+fn inbox_wait_allowance(uri: &axum::http::Uri) -> Option<Duration> {
+    if uri.path() != "/v1/inbox" {
+        return None;
+    }
+    let mut wait = None;
+    for pair in uri.query()?.split('&') {
+        let (name, value) = pair.split_once('=')?;
+        if name == "wait" {
+            if wait.is_some()
+                || value.is_empty()
+                || !value.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                return None;
+            }
+            let seconds = value.parse::<u8>().ok()?;
+            if seconds > 30 {
+                return None;
+            }
+            wait = Some(seconds);
+        }
+    }
+    wait.map(|seconds| Duration::from_secs(u64::from(seconds)))
 }
 
 async fn health() -> Json<StatusBody> {
@@ -1522,13 +1689,67 @@ async fn inbox(
     headers: HeaderMap,
     ApiQuery(query): ApiQuery<InboxQuery>,
 ) -> Result<Response, ApiFailure> {
-    if !(1..=100).contains(&query.limit) || query.wait_seconds != 0 {
+    if !(1..=100).contains(&query.limit) || query.wait_seconds > 30 {
         return Err(ApiFailure(ApiErrorCode::InvalidRequest));
     }
-    let page = state
+    let credential = credential(&headers)?;
+    let mut page = state
         .worker
-        .pending(credential(&headers)?, usize::from(query.limit))
+        .pending(credential.clone(), usize::from(query.limit))
         .await?;
+    #[cfg(test)]
+    state.worker.inbox_preflight_barrier().await;
+    if page.pending_count == 0 && query.wait_seconds > 0 {
+        let mut subscription = state
+            .worker
+            .inner
+            .notifications
+            .subscribe(&page.recipient_membership)
+            .ok_or(ApiFailure(ApiErrorCode::RateLimited))?;
+
+        // Register before the second durable check. A send in the preflight-to-
+        // registration gap is observed by this query; subsequent sends advance
+        // the watch generation, which cannot be lost even when coalesced.
+        page = state
+            .worker
+            .pending(credential.clone(), usize::from(query.limit))
+            .await?;
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_secs(u64::from(query.wait_seconds));
+        while page.pending_count == 0 {
+            tokio::select! {
+                biased;
+                () = wait_for_shutdown(state.shutdown.clone()) => {
+                    return Err(ApiFailure(ApiErrorCode::DatabaseBusy));
+                }
+                () = tokio::time::sleep_until(deadline) => break,
+                changed = subscription.receiver.changed() => {
+                    if changed.is_err() {
+                        return Err(ApiFailure(ApiErrorCode::DatabaseBusy));
+                    }
+                    page = state
+                        .worker
+                        .pending(credential.clone(), usize::from(query.limit))
+                        .await?;
+                }
+            }
+        }
+    }
+    encode_inbox(page)
+}
+
+async fn wait_for_shutdown(mut shutdown: watch::Receiver<bool>) {
+    loop {
+        if *shutdown.borrow() {
+            return;
+        }
+        if shutdown.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
+fn encode_inbox(page: InboxPage) -> Result<Response, ApiFailure> {
     let response = InboxResponse {
         messages: page
             .messages
@@ -1607,12 +1828,13 @@ pub async fn serve(
     config: RelayConfig,
     shutdown: watch::Receiver<bool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    serve_with_router_factory(config, shutdown, |worker, config| {
-        router_with_limits(
+    serve_with_router_factory(config, shutdown, |worker, config, shutdown| {
+        router_with_limits_and_shutdown(
             worker,
             config.max_body_bytes,
             config.max_in_flight_requests,
             config.request_timeout,
+            shutdown,
         )
     })
     .await
@@ -1621,7 +1843,7 @@ pub async fn serve(
 async fn serve_with_router_factory(
     config: RelayConfig,
     mut shutdown: watch::Receiver<bool>,
-    make_router: impl FnOnce(StoreWorker, &RelayConfig) -> Router,
+    make_router: impl FnOnce(StoreWorker, &RelayConfig, watch::Receiver<bool>) -> Router,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     config.validate()?;
     warn_if_lan(&config);
@@ -1638,7 +1860,7 @@ async fn serve_with_router_factory(
     let shutdown_notice = Arc::clone(&shutdown_started);
     let server = axum::serve(
         LimitedTcpListener::new(listener, config.max_connections),
-        make_router(worker.clone(), &config),
+        make_router(worker.clone(), &config, shutdown.clone()),
     )
     .with_graceful_shutdown(async move {
         while !*shutdown.borrow() && shutdown.changed().await.is_ok() {}
@@ -2780,7 +3002,7 @@ mod tests {
         let task = tokio::spawn(serve_with_router_factory(
             config,
             shutdown_rx,
-            move |worker, config| {
+            move |worker, config, shutdown| {
                 let slow = move || {
                     let started = Arc::clone(&route_started);
                     let release = Arc::clone(&route_release);
@@ -2795,7 +3017,7 @@ mod tests {
                         .route("/healthz", get(health))
                         .route("/readyz", get(ready))
                         .route("/slow", get(slow))
-                        .with_state(AppState { worker }),
+                        .with_state(AppState { worker, shutdown }),
                     config.max_body_bytes,
                     config.max_in_flight_requests,
                     config.request_timeout,
@@ -2931,6 +3153,431 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn long_poll_wakes_all_relevant_watchers_and_cleans_registrations() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let (worker, handle) = StoreWorker::start(&directory.path().join("psst.db"), 256).unwrap();
+        let app = router_with_limits(worker.clone(), 512 * 1024, 128, Duration::from_secs(5));
+        let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
+        let bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
+
+        let mut watchers = Vec::new();
+        for _ in 0..100 {
+            let app = app.clone();
+            let bob = bob.clone();
+            watchers.push(tokio::spawn(async move {
+                json_request(
+                    app,
+                    Request::get("/v1/inbox?limit=100&wait=2")
+                        .header("authorization", format!("Bearer {bob}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+            }));
+        }
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while worker.inner.notifications.registration_count() != 100 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let (status, _, _) = json_request(
+            app,
+            Request::post("/v1/messages")
+                .header("authorization", format!("Bearer {alice}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"recipient":"bob","body":"wake","priority":"normal","dedupe_key":"wake-1"}"#,
+                ))
+                .unwrap(),
+        ).await;
+        assert_eq!(status, StatusCode::OK);
+        for watcher in watchers {
+            let (status, _, inbox) = watcher.await.unwrap();
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(inbox["pending_count"], 1);
+        }
+        assert_eq!(worker.inner.notifications.registration_count(), 0);
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn long_poll_timeout_is_empty_and_does_not_acknowledge_future_mail() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let (worker, handle) = StoreWorker::start(&directory.path().join("psst.db"), 16).unwrap();
+        let app = router(worker.clone());
+        let _alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
+        let bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
+        let started = tokio::time::Instant::now();
+        let (status, _, inbox) = json_request(
+            app,
+            Request::get("/v1/inbox?limit=100&wait=1")
+                .header("authorization", format!("Bearer {bob}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(started.elapsed() >= Duration::from_millis(900));
+        assert_eq!(inbox["pending_count"], 0);
+        assert!(inbox["messages"].as_array().unwrap().is_empty());
+        assert_eq!(worker.inner.notifications.registration_count(), 0);
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancellation_irrelevant_send_and_shutdown_release_waiters() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let (worker, handle) = StoreWorker::start(&directory.path().join("psst.db"), 32).unwrap();
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let app = router_with_limits_and_shutdown(
+            worker.clone(),
+            512 * 1024,
+            128,
+            Duration::from_secs(5),
+            shutdown_rx,
+        );
+        let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
+        let bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
+        let charlie = join_for_messaging(app.clone(), "alpha", "charlie", false).await;
+        let wait = |credential: String| {
+            let app = app.clone();
+            tokio::spawn(async move {
+                json_request(
+                    app,
+                    Request::get("/v1/inbox?limit=100&wait=30")
+                        .header("authorization", format!("Bearer {credential}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+            })
+        };
+        let bob_wait = wait(bob.clone());
+        let charlie_wait = wait(charlie);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while worker.inner.notifications.registration_count() != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let (status, _, _) = json_request(
+            app.clone(),
+            Request::post("/v1/messages")
+                .header("authorization", format!("Bearer {alice}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"recipient":"bob","body":"only bob","priority":"normal","dedupe_key":"isolation-1"}"#,
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let bob_inbox = bob_wait.await.unwrap().2;
+        assert_eq!(bob_inbox["pending_count"], 1);
+        assert_eq!(worker.inner.notifications.registration_count(), 1);
+
+        charlie_wait.abort();
+        assert!(charlie_wait.await.unwrap_err().is_cancelled());
+        assert_eq!(worker.inner.notifications.registration_count(), 0);
+
+        let message_id = bob_inbox["messages"][0]["id"].as_str().unwrap();
+        let (status, _, _) = json_request(
+            app.clone(),
+            Request::post("/v1/messages/ack")
+                .header("authorization", format!("Bearer {bob}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(r#"{{"message_ids":["{message_id}"]}}"#)))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let shutdown_wait = wait(bob);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while worker.inner.notifications.registration_count() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        shutdown_tx.send(true).unwrap();
+        let (status, _, body) = shutdown_wait.await.unwrap();
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["error"]["code"], "database_busy");
+        assert_eq!(worker.inner.notifications.registration_count(), 0);
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn waiter_capacity_is_stable_retryable_and_preexisting_mail_never_sleeps() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let (worker, handle) = StoreWorker::start(&directory.path().join("psst.db"), 256).unwrap();
+        let app = router_with_limits(worker.clone(), 512 * 1024, 256, Duration::from_secs(5));
+        let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
+        let bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
+        let (status, _, _) = json_request(
+            app.clone(),
+            Request::post("/v1/messages")
+                .header("authorization", format!("Bearer {alice}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"recipient":"bob","body":"already here","priority":"normal","dedupe_key":"preexisting-1"}"#,
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let started = tokio::time::Instant::now();
+        let (_, _, inbox) = json_request(
+            app.clone(),
+            Request::get("/v1/inbox?limit=100&wait=30")
+                .header("authorization", format!("Bearer {bob}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(inbox["pending_count"], 1);
+        assert!(started.elapsed() < Duration::from_secs(1));
+
+        // Use a fresh recipient so every request reaches the wait registry.
+        let charlie = join_for_messaging(app.clone(), "alpha", "charlie", false).await;
+        let mut waits = Vec::new();
+        for _ in 0..MAX_INBOX_WAITERS {
+            let app = app.clone();
+            let charlie = charlie.clone();
+            waits.push(tokio::spawn(async move {
+                json_request(
+                    app,
+                    Request::get("/v1/inbox?limit=1&wait=30")
+                        .header("authorization", format!("Bearer {charlie}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+            }));
+        }
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while worker.inner.notifications.registration_count() != MAX_INBOX_WAITERS {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let (status, _, body) = json_request(
+            app,
+            Request::get("/v1/inbox?limit=1&wait=30")
+                .header("authorization", format!("Bearer {charlie}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(body["error"]["code"], "rate_limited");
+        for wait in waits {
+            wait.abort();
+            assert!(wait.await.unwrap_err().is_cancelled());
+        }
+        assert_eq!(worker.inner.notifications.registration_count(), 0);
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn committed_send_in_preflight_subscription_gap_is_reconciled() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let (worker, handle) = StoreWorker::start(&directory.path().join("psst.db"), 32).unwrap();
+        let app = router(worker.clone());
+        let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
+        let bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
+        let (preflight_done, release) = worker.pause_next_inbox_after_preflight();
+        let waiting = tokio::spawn(json_request(
+            app.clone(),
+            Request::get("/v1/inbox?limit=100&wait=30")
+                .header("authorization", format!("Bearer {bob}"))
+                .body(Body::empty())
+                .unwrap(),
+        ));
+        preflight_done.await.unwrap();
+        let response = app.oneshot(
+            Request::post("/v1/messages")
+                .header("authorization", format!("Bearer {alice}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"recipient":"bob","body":"in the gap","priority":"normal","dedupe_key":"gap-1"}"#))
+                .unwrap(),
+        ).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        release.send(()).unwrap();
+        let (status, _, inbox) = waiting.await.unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(inbox["pending_count"], 1);
+        assert_eq!(inbox["messages"][0]["body"], "in the gap");
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn committed_send_wakes_waiter_even_when_sender_http_deadline_expires() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let (worker, handle) = StoreWorker::start_with_time(
+            &directory.path().join("psst.db"),
+            32,
+            Duration::from_secs(2),
+            Arc::new(SystemTimeSource),
+        )
+        .unwrap();
+        let app = router_with_limits(worker.clone(), 512 * 1024, 128, Duration::from_millis(20));
+        let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
+        let bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
+        let waiting = tokio::spawn(json_request(
+            app.clone(),
+            Request::get("/v1/inbox?limit=100&wait=30")
+                .header("authorization", format!("Bearer {bob}"))
+                .body(Body::empty())
+                .unwrap(),
+        ));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while worker.inner.notifications.registration_count() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let completion = worker
+            .delay_next_send_reply(Duration::from_millis(100))
+            .await
+            .unwrap();
+        let response = app.oneshot(
+            Request::post("/v1/messages")
+                .header("authorization", format!("Bearer {alice}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"recipient":"bob","body":"committed","priority":"normal","dedupe_key":"timeout-wake-1"}"#)).unwrap(),
+            ).await.unwrap();
+        assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+        let (_, _, inbox) = waiting.await.unwrap();
+        assert_eq!(inbox["pending_count"], 1);
+        completion.recv_timeout(Duration::from_secs(1)).unwrap();
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_send_does_not_advance_recipient_or_wake_waiter() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let (worker, handle) = StoreWorker::start(&directory.path().join("psst.db"), 32).unwrap();
+        let app = router(worker.clone());
+        let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
+        let bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
+        let waiting = tokio::spawn(json_request(
+            app.clone(),
+            Request::get("/v1/inbox?limit=100&wait=1")
+                .header("authorization", format!("Bearer {bob}"))
+                .body(Body::empty())
+                .unwrap(),
+        ));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while worker.inner.notifications.registration_count() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let (status, _, _) = json_request(
+            app,
+            Request::post("/v1/messages")
+                .header("authorization", format!("Bearer {alice}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"recipient":"missing","body":"must fail","priority":"normal","dedupe_key":"failed-1"}"#)).unwrap(),
+        ).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(
+            !waiting.is_finished(),
+            "failed send spuriously woke the waiter"
+        );
+        assert_eq!(worker.inner.notifications.registration_count(), 1);
+        let (status, _, inbox) = waiting.await.unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(inbox["pending_count"], 0);
+        assert_eq!(worker.inner.notifications.registration_count(), 0);
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn inbox_deadline_allowance_requires_one_valid_canonical_wait() {
+        let allowance =
+            |value: &str| inbox_wait_allowance(&value.parse::<axum::http::Uri>().unwrap());
+        assert_eq!(allowance("/v1/inbox?limit=1&wait=0"), Some(Duration::ZERO));
+        assert_eq!(
+            allowance("/v1/inbox?limit=1&wait=30"),
+            Some(Duration::from_secs(30))
+        );
+        for invalid in [
+            "/v1/inbox?limit=1",
+            "/v1/inbox?wait=1&wait=2",
+            "/v1/inbox?wait=31",
+            "/v1/inbox?wait=overflow",
+            "/v1/inbox?wait=",
+            "/v1/messages?wait=1",
+        ] {
+            assert_eq!(allowance(invalid), None, "{invalid}");
+        }
+    }
+
+    #[tokio::test]
+    async fn inbox_deadline_is_exact_base_plus_valid_wait_allowance() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let (worker, handle) = StoreWorker::start_with_time(
+            &directory.path().join("psst.db"),
+            8,
+            Duration::from_secs(2),
+            Arc::new(SystemTimeSource),
+        )
+        .unwrap();
+        let app = router_with_limits(worker.clone(), 512 * 1024, 8, Duration::from_millis(25));
+        let _alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
+        let bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
+
+        for (wait, maximum) in [
+            (0, Duration::from_millis(200)),
+            (1, Duration::from_millis(1_200)),
+        ] {
+            let (started_tx, started_rx) = oneshot::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let blocked_worker = worker.clone();
+            let block_task = tokio::spawn(async move {
+                blocked_worker
+                    .controlled_block(started_tx, release_rx)
+                    .await
+            });
+            started_rx.await.unwrap();
+            let response = tokio::time::timeout(
+                maximum,
+                app.clone().oneshot(
+                    Request::get(format!("/v1/inbox?limit=1&wait={wait}"))
+                        .header("authorization", format!("Bearer {bob}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                ),
+            )
+            .await
+            .expect("middleware deadline exceeded its exact allowance")
+            .unwrap();
+            assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+            release_tx.send(()).unwrap();
+            block_task.await.unwrap().unwrap();
+        }
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+    }
+
+    #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn messaging_http_is_durable_replayable_bounded_and_path_authorized() {
         let directory = tempfile::TempDir::new().unwrap();
@@ -3041,7 +3688,7 @@ mod tests {
 
         for uri in [
             "/v1/inbox?limit=0&wait=0",
-            "/v1/inbox?limit=1&wait=1",
+            "/v1/inbox?limit=1&wait=31",
             "/v1/inbox?limit=overflow&wait=0",
             "/v1/squads/alpha/transcript?after=-1&limit=1",
             "/v1/squads/alpha/transcript?after=0&limit=101",

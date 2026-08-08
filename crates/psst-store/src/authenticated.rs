@@ -43,6 +43,9 @@ pub struct SendOutcome {
 pub struct InboxPage {
     pub messages: Vec<MessageView>,
     pub pending_count: u64,
+    /// Authenticated recipient identity used by the relay for local wake routing.
+    /// This metadata is never serialized on the wire.
+    pub recipient_membership: MembershipId,
 }
 
 #[derive(Clone, Debug)]
@@ -645,7 +648,7 @@ impl Store {
         let records = pending_inbox_on(
             &tx,
             &InboxQuery {
-                recipient: identity.membership,
+                recipient: identity.membership.clone(),
                 limit,
             },
         )?;
@@ -657,6 +660,7 @@ impl Store {
         Ok(InboxPage {
             messages,
             pending_count,
+            recipient_membership: identity.membership,
         })
     }
 
