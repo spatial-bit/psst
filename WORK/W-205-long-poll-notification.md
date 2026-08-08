@@ -1,6 +1,6 @@
 # W-205: Bounded long polling and post-commit notification
 
-Status: blocked on W-204
+Status: active
 
 ## Objective
 

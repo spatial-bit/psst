@@ -1,6 +1,6 @@
 # W-204: Durable messaging, acknowledgement, and transcript HTTP API
 
-Status: active
+Status: verified
 
 ## Objective
 
@@ -51,4 +51,7 @@ Do not implement waiting inbox behavior, notification registries, client retries
 
 ## Verification evidence
 
-Pending.
+- Independently reviewed and approved after atomic name-addressed send, historical retry/name-reuse, acknowledgement semantics, serialized response bounds, multi-restart durability, and ambiguous-commit findings were closed.
+- `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `git diff --check` passed.
+- `cargo test --workspace` passed with 137 tests: 17 core, 18 protocol, 29 relay, and 73 store tests, plus doc tests.
+- Revision `7591018` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31231619550>.
