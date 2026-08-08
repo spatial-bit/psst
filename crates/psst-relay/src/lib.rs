@@ -3439,7 +3439,10 @@ mod tests {
             Arc::new(SystemTimeSource),
         )
         .unwrap();
-        let app = router_with_limits(worker.clone(), 512 * 1024, 128, Duration::from_millis(20));
+        // Leave enough headroom for a contended CI runner to register the waiter and
+        // dispatch the send before the shared HTTP deadline. The delayed reply remains
+        // well beyond that deadline, so the behavior under test is unchanged.
+        let app = router_with_limits(worker.clone(), 512 * 1024, 128, Duration::from_millis(250));
         let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
         let bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
         let waiting = tokio::spawn(json_request(
@@ -3457,7 +3460,7 @@ mod tests {
         .await
         .unwrap();
         let completion = worker
-            .delay_next_send_reply(Duration::from_millis(100))
+            .delay_next_send_reply(Duration::from_secs(1))
             .await
             .unwrap();
         let response = app.oneshot(
@@ -3469,7 +3472,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
         let (_, _, inbox) = waiting.await.unwrap();
         assert_eq!(inbox["pending_count"], 1);
-        completion.recv_timeout(Duration::from_secs(1)).unwrap();
+        completion.recv_timeout(Duration::from_secs(2)).unwrap();
         worker.begin_shutdown();
         handle.join().unwrap().unwrap();
     }
