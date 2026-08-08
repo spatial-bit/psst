@@ -13,6 +13,12 @@ pub fn effective_uid() -> u32 {
 #[cfg(windows)]
 use std::{fs::File, io};
 
+#[cfg(unix)]
+use std::{
+    fs::File,
+    io::{self, Read},
+};
+
 /// Opens and pins a local directory with relative-child creation/replacement rights.
 ///
 /// # Errors
@@ -457,6 +463,28 @@ pub fn fill_secure_random(output: &mut [u8]) -> io::Result<()> {
         Err(io::Error::other("secure randomness unavailable"))
     } else {
         Ok(())
+    }
+}
+
+/// Fills a buffer using the operating system's cryptographic random source.
+///
+/// # Errors
+/// Returns an error when the operating system cannot provide secure randomness.
+#[cfg(unix)]
+pub fn fill_secure_random(output: &mut [u8]) -> io::Result<()> {
+    File::open("/dev/urandom")?.read_exact(output)
+}
+
+#[cfg(all(test, unix))]
+mod unix_tests {
+    use super::fill_secure_random;
+
+    #[test]
+    fn secure_random_accepts_empty_and_nonempty_buffers() {
+        fill_secure_random(&mut []).unwrap();
+
+        let mut output = [0_u8; 32];
+        fill_secure_random(&mut output).unwrap();
     }
 }
 

@@ -567,7 +567,6 @@ fn is_reparse(file: &File) -> io::Result<bool> {
     Ok(file.metadata()?.file_attributes() & 0x400 != 0)
 }
 
-#[cfg(windows)]
 fn invalid_input() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "invalid leave journal path")
 }
