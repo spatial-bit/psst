@@ -42,6 +42,8 @@ Last reconciled: 2026-08-08
 ## Active
 
 - W-301 Slice 3 CLI, profile, and MCP contracts.
+- W-301 implementation repair passes the Windows local format, strict lint, and 174-test workspace
+  gate; independent review and cross-platform CI evidence remain pending.
 
 ## Ready
 
@@ -49,10 +51,10 @@ Last reconciled: 2026-08-08
 
 ## Gate evidence
 
-- Windows local formatting: passed
-- Windows local lint: passed
-- Windows local tests: passed
-- GitHub Actions matrix: passed on Windows, Linux, and macOS
+- Windows local formatting: passed for W-301 implementation
+- Windows local lint: passed for W-301 implementation
+- Windows local tests: passed for W-301 implementation
+- W-301 GitHub Actions matrix: pending on Windows, Linux, and macOS
 
 ## Next coordinator action
 

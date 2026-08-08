@@ -36,4 +36,14 @@ Do not persist credentials, start heartbeat tasks, implement command behavior, c
 
 ## Verification evidence
 
-Pending.
+- Windows implementation gate on Rust 1.89.0: `cargo fmt --all -- --check`,
+  `cargo clippy --workspace --all-targets --locked -- -D warnings`, and
+  `cargo test --workspace --locked` passed on 2026-08-08 using an isolated target directory because
+  a concurrent reviewer owned the workspace target lock.
+- The workspace suite includes 174 tests: seven application contract/golden/security tests, two MCP
+  metadata/framing tests, and three child-process stdio tests covering handshake, protocol failure, exact
+  1 MiB framing failure, fixed diagnostics, hostile-content non-reflection, and bounded cleanup.
+- Exact `rmcp = 3.1.2` builds on Rust 1.89. Its direct feature surface remains
+  `server`, `transport-io`, and `macros`; macros are retained for the immediately following W-306
+  checked-in tool-server implementation and introduce no activation behavior.
+- Cross-platform acceptance remains pending CI evidence and independent review.

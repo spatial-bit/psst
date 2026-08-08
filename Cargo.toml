@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/psst-core", "crates/psst-protocol", "crates/psst-store", "crates/psst-relay", "crates/psst-client"]
+members = ["crates/psst-application", "crates/psst-core", "crates/psst-protocol", "crates/psst-store", "crates/psst-relay", "crates/psst-client", "crates/psst-mcp"]
 
 [workspace.package]
 version = "0.0.0"
@@ -28,6 +28,8 @@ tower = { version = "0.5.2", features = ["util", "limit"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls"] }
+rmcp = { version = "=3.1.2", default-features = false, features = ["server", "macros", "transport-io"] }
+schemars = "=1.2.2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

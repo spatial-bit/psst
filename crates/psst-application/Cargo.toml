@@ -1,0 +1,21 @@
+[package]
+name = "psst-application"
+description = "Non-secret CLI and cooperative MCP contracts for Psst"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+psst-client = { path = "../psst-client" }
+psst-protocol = { path = "../psst-protocol" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
+
+[lints]
+workspace = true

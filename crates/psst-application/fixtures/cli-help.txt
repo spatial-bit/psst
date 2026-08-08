@@ -1,0 +1,39 @@
+Psst — durable direct messages for cooperative AI agents
+
+Usage: psst [GLOBAL OPTIONS] <command>
+
+Global options:
+  --relay <origin>       Relay origin (CLI > PSST_RELAY > config > default)
+  --profile <name>       Local profile (CLI > PSST_PROFILE > config > default)
+  --config <path>        Non-secret configuration file
+  --json                 Emit one versioned JSON value on the designated stream
+  -h, --help             Print help
+  -V, --version          Print version
+
+Commands:
+  relay start [--bind <address>] [--data-dir <path>] [--allow-lan] [--log <level>]
+  health
+  config show --effective
+  profile list
+  profile show [<name>]
+  squad list
+  squad create <squad> --mission <text>
+  squad describe <squad>
+  squad archive <squad>
+  squad join <squad> --name <name> --role <role> [--mission <text>]
+  squad leave
+  squad roster
+  message send --to <member> (--body <text> | --file <path|->) [--priority normal|high] [--reply-to <id>] [--correlation-id <id>]
+  inbox [--limit <1..100>] [--wait <0..30>] [--ack <id>...]
+  listen [--wait <1..30>] [--ack]
+  message acknowledge <id>...
+  transcript [--after <sequence>] [--limit <1..100>]
+  status
+  database info
+  database backup <destination>
+  database integrity-check
+
+In --json mode success writes exactly one JSON value plus a newline to stdout and writes nothing
+to stderr. Failure writes exactly one JSON value plus a newline to stderr and writes nothing to
+stdout. No surrounding prose is permitted. Sensitive authentication material never appears in
+arguments, environment variables, output, help, diagnostics, configuration, or model-visible data.
