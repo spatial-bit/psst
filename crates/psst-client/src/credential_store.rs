@@ -109,6 +109,8 @@ impl CredentialStore {
         fs::create_dir_all(parent)?;
         reject_substitution(parent)?;
         let directory_guard = open_directory_guard(parent)?;
+        #[cfg(unix)]
+        verify_owned_directory(&directory_guard)?;
         let store = Self {
             path,
             directory_guard,
@@ -445,6 +447,20 @@ fn open_directory_guard(path: &Path) -> io::Result<fs::File> {
     }
 }
 
+#[cfg(unix)]
+fn verify_owned_directory(directory: &fs::File) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = directory.metadata()?;
+    if metadata.uid() == psst_platform_security::effective_uid() && metadata.mode() & 0o022 == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "credential directory permissions are unsafe",
+        ))
+    }
+}
+
 fn canonical_origin(raw: &str) -> io::Result<String> {
     let mut value = url::Url::parse(raw).map_err(|_| invalid())?;
     if !matches!(value.scheme(), "http" | "https")
@@ -500,6 +516,20 @@ fn open_existing_for_delete(path: &Path) -> io::Result<fs::File> {
     verify_restricted_handle(&file)?;
     Ok(file)
 }
+#[cfg(unix)]
+fn reject_substitution(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "link substitution rejected",
+        )),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(windows)]
 fn reject_substitution(path: &Path) -> io::Result<()> {
     let mut current = Some(path);
     while let Some(p) = current {
@@ -514,7 +544,6 @@ fn reject_substitution(path: &Path) -> io::Result<()> {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(e),
         }
-        #[cfg(windows)]
         if p.exists() {
             use std::os::windows::fs::MetadataExt;
             if fs::metadata(p)?.file_attributes() & 0x400 != 0 {
@@ -909,6 +938,32 @@ mod tests {
                 .contains("credential-tmp")
         }));
     }
+    #[cfg(unix)]
+    #[test]
+    fn unix_external_alias_is_allowed_but_retarget_cannot_redirect_writes() {
+        use std::os::unix::fs::symlink;
+        let t = tempfile::tempdir().unwrap();
+        let real = t.path().join("real");
+        let attacker = t.path().join("attacker");
+        fs::create_dir_all(real.join("credentials")).unwrap();
+        fs::create_dir_all(attacker.join("credentials")).unwrap();
+        let alias = t.path().join("alias");
+        symlink(&real, &alias).unwrap();
+        let store = CredentialStore::open(alias.join("credentials/credential.json")).unwrap();
+
+        fs::remove_file(&alias).unwrap();
+        symlink(&attacker, &alias).unwrap();
+        store
+            .store(
+                &binding(),
+                &credential("ins_one.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+            )
+            .unwrap();
+
+        assert!(real.join("credentials/credential.json").is_file());
+        assert!(!attacker.join("credentials/credential.json").exists());
+    }
+
     #[cfg(unix)]
     #[test]
     fn unix_symlink_and_unsafe_mode_are_rejected() {
