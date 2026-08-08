@@ -1,6 +1,6 @@
 # W-205: Bounded long polling and post-commit notification
 
-Status: active
+Status: verified
 
 ## Objective
 
@@ -50,4 +50,7 @@ Do not implement adapter wake state machines, MCP Channels, Codex activation, ba
 
 ## Verification evidence
 
-Pending.
+- Independently reviewed and approved after no-lost-wake, post-commit notification, sender cancellation, failed-send isolation, capacity cleanup, shutdown, and exact deadline findings were closed.
+- `cargo fmt --check`, strict all-target/all-feature Clippy, and `git diff --check` passed.
+- `cargo test --workspace` passed with 146 tests: 17 core, 18 protocol, 38 relay, and 73 store tests, plus doc tests.
+- Revision `2273849` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31233081040>.

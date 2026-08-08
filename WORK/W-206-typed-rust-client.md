@@ -1,6 +1,6 @@
 # W-206: Typed Rust client and retry boundaries
 
-Status: blocked on W-205
+Status: active
 
 ## Objective
 

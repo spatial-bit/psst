@@ -29,14 +29,15 @@ Last reconciled: 2026-08-07
 - W-202 authenticated store boundary and relay runtime independently approved with 126 passing tests; revision `b99f9c4` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31227930335>.
 - W-203 lifecycle HTTP API independently approved with 130 passing tests; revision `1d2a2ca` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31229928971>.
 - W-204 message, inbox, acknowledgement, and transcript HTTP API independently approved with 137 passing tests; revision `7591018` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31231619550>.
+- W-205 bounded long polling independently approved with 146 passing tests; revision `2273849` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31233081040>.
 
 ## Active
 
-- W-205 bounded long-poll notification and cancellation semantics.
+- W-206 typed Rust client, credential handling, and retry semantics.
 
 ## Ready
 
-- W-206 typed Rust client is ready after W-205.
+- W-207 Slice 2 reliability gate is ready after W-206.
 
 ## Gate evidence
 
@@ -47,4 +48,4 @@ Last reconciled: 2026-08-07
 
 ## Next coordinator action
 
-Implement W-205 long-poll notification and cancellation semantics, independently review them, and capture cross-platform CI evidence.
+Implement W-206 typed Rust client, independently review it, and capture cross-platform CI evidence.
