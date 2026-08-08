@@ -1,22 +1,59 @@
 use psst_core::{
-    AgentMode, Availability, AvailabilityObservation, AvailabilitySource, InstanceId,
-    InstanceState, MembershipId, MessageId, ResumeToken, SquadId, SquadName, SquadState,
-    UnixMillis, renew_lease,
+    AgentMode, Availability, AvailabilityObservation, AvailabilitySource, CorrelationId, DedupeKey,
+    InstanceId, InstanceState, MemberName, MembershipId, MessageBody, MessageId, MessagePriority,
+    MessageSemantics, ResumeToken, SquadId, SquadName, SquadState, UnixMillis, renew_lease,
 };
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 
 use crate::inbox::{acknowledge_on, map_message, pending_inbox_on};
 use crate::instance::{authenticate, insert_instance, validate_client, validate_observation};
-use crate::message::{resolve_retry, send_in_transaction};
+use crate::message::{find_by_dedupe, resolve_retry, send_in_transaction};
 use crate::{
     AcknowledgeMessages, ClaimOutcome, InboxQuery, InstanceRecord, JoinMembership, LeasePolicy,
     MembershipRecord, MessageRecord, RepositoryError, SendMessage, SquadRecord, Store,
 };
 
+#[derive(Clone, Debug)]
+pub struct SendByName {
+    pub id: MessageId,
+    pub recipient: MemberName,
+    pub body: MessageBody,
+    pub priority: MessagePriority,
+    pub dedupe_key: DedupeKey,
+    pub reply_to: Option<MessageId>,
+    pub correlation_id: Option<CorrelationId>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageView {
+    pub message: MessageRecord,
+    pub squad: SquadName,
+    pub sender: MemberName,
+    pub recipient: MemberName,
+    pub acknowledged_at: Option<UnixMillis>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SendOutcome {
+    pub message: MessageView,
+    pub idempotent_replay: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InboxPage {
+    pub messages: Vec<MessageView>,
+    pub pending_count: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct TranscriptByName {
+    pub squad: SquadName,
+    pub after: i64,
+    pub limit: usize,
+}
+
 #[cfg(test)]
-use psst_core::{
-    AgentId, DedupeKey, MemberName, MessageBody, MessagePriority, MessageSemantics, Mission, Role,
-};
+use psst_core::{AgentId, Mission, Role};
 #[cfg(test)]
 use std::{
     sync::{Arc, Barrier},
@@ -509,6 +546,120 @@ impl Store {
         Ok(result)
     }
 
+    pub fn authenticated_send_by_name(
+        &mut self,
+        session: &AuthenticatedSession<'_>,
+        request: &SendByName,
+    ) -> Result<SendOutcome, RepositoryError> {
+        let tx = self
+            .connection_mut()
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let identity = authenticate_historical(&tx, session)?;
+
+        let existing_recipient = tx
+            .query_row(
+                "SELECT recipient_membership_id FROM messages
+                 WHERE squad_id = ?1 AND sender_membership_id = ?2 AND dedupe_key = ?3",
+                params![
+                    identity.squad.as_str(),
+                    identity.membership.as_str(),
+                    request.dedupe_key.as_str()
+                ],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(|value| {
+                value
+                    .parse()
+                    .map_err(|_| RepositoryError::InvalidStoredData)
+            })
+            .transpose()?;
+
+        if let Some(recipient_id) = existing_recipient {
+            let candidate = send_from_name(
+                request,
+                &identity.squad,
+                &identity.membership,
+                recipient_id,
+                session.now,
+            );
+            let existing =
+                find_by_dedupe(&tx, &candidate)?.ok_or(RepositoryError::InvalidStoredData)?;
+            if existing.semantics != candidate.semantics {
+                return Err(RepositoryError::IdempotencyConflict);
+            }
+            let view = message_view_on(&tx, existing)?;
+            if view.recipient != request.recipient {
+                return Err(RepositoryError::IdempotencyConflict);
+            }
+            tx.commit()?;
+            return Ok(SendOutcome {
+                message: view,
+                idempotent_replay: true,
+            });
+        }
+
+        authorize_current(&tx, session)?;
+        let recipient_id = tx
+            .query_row(
+                "SELECT id FROM memberships
+                 WHERE squad_id = ?1 AND normalized_name = ?2 AND left_at IS NULL",
+                params![identity.squad.as_str(), request.recipient.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or(RepositoryError::RecipientNotFound)?
+            .parse()
+            .map_err(|_| RepositoryError::InvalidStoredData)?;
+        let send = send_from_name(
+            request,
+            &identity.squad,
+            &identity.membership,
+            recipient_id,
+            session.now,
+        );
+        let record = send_in_transaction(&tx, &send)?;
+        let view = message_view_on(&tx, record)?;
+        tx.commit()?;
+        Ok(SendOutcome {
+            message: view,
+            idempotent_replay: false,
+        })
+    }
+
+    pub fn authenticated_pending_page(
+        &mut self,
+        session: &AuthenticatedSession<'_>,
+        limit: usize,
+    ) -> Result<InboxPage, RepositoryError> {
+        let tx = self
+            .connection_mut()
+            .transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let identity = authorize_current(&tx, session)?;
+        let pending_count = tx.query_row(
+            "SELECT COUNT(*) FROM messages
+             WHERE recipient_membership_id = ?1 AND acknowledged_at IS NULL",
+            [identity.membership.as_str()],
+            |row| row.get::<_, u64>(0),
+        )?;
+        let records = pending_inbox_on(
+            &tx,
+            &InboxQuery {
+                recipient: identity.membership,
+                limit,
+            },
+        )?;
+        let messages = records
+            .into_iter()
+            .map(|record| message_view_on(&tx, record))
+            .collect::<Result<Vec<_>, _>>()?;
+        tx.commit()?;
+        Ok(InboxPage {
+            messages,
+            pending_count,
+        })
+    }
+
     pub fn authenticated_pending(
         &mut self,
         session: &AuthenticatedSession<'_>,
@@ -577,6 +728,39 @@ impl Store {
         };
         tx.commit()?;
         Ok(result)
+    }
+
+    pub fn authenticated_transcript_views(
+        &mut self,
+        session: &AuthenticatedSession<'_>,
+        query: &TranscriptByName,
+    ) -> Result<Vec<MessageView>, RepositoryError> {
+        if !(1..=100).contains(&query.limit) || query.after < 0 {
+            return Err(RepositoryError::InvalidRequest);
+        }
+        let tx = self
+            .connection_mut()
+            .transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let identity = authorize_current(&tx, session)?;
+        let squad = squad_by_id(&tx, &identity.squad)?;
+        if squad.name != query.squad {
+            return Err(RepositoryError::NotMember);
+        }
+        let records = {
+            let mut statement = tx.prepare("SELECT sequence,id,squad_id,sender_membership_id,recipient_membership_id,body,body_hash,priority,reply_to,correlation_id,dedupe_key,created_at FROM messages WHERE squad_id=?1 AND sequence>?2 ORDER BY sequence LIMIT ?3")?;
+            statement
+                .query_map(
+                    params![identity.squad.as_str(), query.after, query.limit],
+                    map_message,
+                )?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let views = records
+            .into_iter()
+            .map(|record| message_view_on(&tx, record))
+            .collect::<Result<Vec<_>, _>>()?;
+        tx.commit()?;
+        Ok(views)
     }
 
     pub fn authenticated_leave(
@@ -738,6 +922,62 @@ impl Store {
             instance: result,
         })
     }
+}
+
+fn send_from_name(
+    request: &SendByName,
+    squad: &SquadId,
+    sender: &MembershipId,
+    recipient: MembershipId,
+    created_at: UnixMillis,
+) -> SendMessage {
+    SendMessage {
+        id: request.id.clone(),
+        semantics: MessageSemantics {
+            squad: squad.clone(),
+            sender: sender.clone(),
+            recipient,
+            body: request.body.clone(),
+            priority: request.priority,
+            reply_to: request.reply_to.clone(),
+            correlation_id: request.correlation_id.clone(),
+        },
+        dedupe_key: request.dedupe_key.clone(),
+        created_at,
+    }
+}
+
+fn message_view_on(
+    tx: &Transaction<'_>,
+    message: MessageRecord,
+) -> Result<MessageView, RepositoryError> {
+    let (squad, sender, recipient, acknowledged_at) = tx
+        .query_row(
+            "SELECT s.name, sm.name, rm.name, m.acknowledged_at
+             FROM messages m
+             JOIN squads s ON s.id = m.squad_id
+             JOIN memberships sm ON sm.id = m.sender_membership_id
+             JOIN memberships rm ON rm.id = m.recipient_membership_id
+             WHERE m.id = ?1",
+            [message.id.as_str()],
+            |row| {
+                Ok((
+                    parse_value(&row.get::<_, String>(0)?)?,
+                    parse_value(&row.get::<_, String>(1)?)?,
+                    parse_value(&row.get::<_, String>(2)?)?,
+                    optional_timestamp_value(row.get(3)?)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(RepositoryError::InvalidStoredData)?;
+    Ok(MessageView {
+        message,
+        squad,
+        sender,
+        recipient,
+        acknowledged_at,
+    })
 }
 
 fn squad_by_name(tx: &Transaction<'_>, name: &SquadName) -> Result<SquadRecord, RepositoryError> {

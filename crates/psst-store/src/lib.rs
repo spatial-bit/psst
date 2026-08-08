@@ -13,8 +13,8 @@ mod message;
 mod repository;
 
 pub use authenticated::{
-    AuthenticatedSession, JoinAndClaim, JoinAndClaimOutcome, LeaveOutcome, SessionContext,
-    TranscriptQuery,
+    AuthenticatedSession, InboxPage, JoinAndClaim, JoinAndClaimOutcome, LeaveOutcome, MessageView,
+    SendByName, SendOutcome, SessionContext, TranscriptByName, TranscriptQuery,
 };
 pub use inbox::{
     AcknowledgeMessages, InboxQuery, MAX_ACK_MESSAGES, MAX_INBOX_MESSAGES, MAX_INBOX_OUTPUT_BYTES,

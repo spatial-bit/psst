@@ -249,7 +249,7 @@ pub struct AckMessagesRequest {
     #[schema(min_items = 1, max_items = 100)]
     pub message_ids: Vec<String>,
 }
-response!(AckMessagesResponse { acknowledged_ids: Vec<String>, acknowledged_at: ApiTimestamp });
+response!(AckMessagesResponse { acknowledged_ids: Vec<String> });
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, IntoParams, ToSchema)]
 #[into_params(parameter_in = Query)]

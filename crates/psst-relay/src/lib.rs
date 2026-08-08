@@ -1,6 +1,6 @@
 //! Bounded relay runtime. Product routes are intentionally added in later work units.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 use std::future::IntoFuture;
 use std::io;
@@ -21,27 +21,32 @@ use std::{
 use axum::{
     Json, Router,
     body::Body,
-    extract::{DefaultBodyLimit, FromRequest, Path as AxumPath, State},
-    http::{HeaderMap, Request, StatusCode, header::AUTHORIZATION},
+    extract::{DefaultBodyLimit, FromRequest, FromRequestParts, Path as AxumPath, Query, State},
+    http::{HeaderMap, Request, StatusCode, header::AUTHORIZATION, request::Parts},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use psst_core::{
-    AgentId, AgentMode, Availability, AvailabilitySource, InstanceId, MemberName, MembershipId,
-    MessageId, Mission, ResumeToken, Role, SquadId, SquadName, SquadState, UnixMillis,
+    AgentId, AgentMode, Availability, AvailabilitySource, CorrelationId, DedupeKey, InstanceId,
+    MemberName, MembershipId, MessageBody, MessageId, MessagePriority, Mission, ResumeToken, Role,
+    SquadId, SquadName, SquadState, UnixMillis,
 };
 use psst_protocol::{
-    AgentModeDto, ApiErrorCode, ApiTimestamp, ArchiveSquadRequest, ArchiveSquadResponse,
-    AvailabilityDto, AvailabilitySourceDto, CreateSquadRequest, ErrorBody, ErrorEnvelope,
-    HeartbeatRequest, HeartbeatResponse, IssuedSessionHeaders, JoinSquadRequest, LeaveSquadRequest,
-    LeaveSquadResponse, MembershipStateDto, ResumeSquadRequest, RosterResponse, SessionCredential,
-    SessionResponse, SquadStateDto, SquadSummary, TransportPresenceDto, Validate,
+    AckMessagesRequest, AckMessagesResponse, AgentModeDto, ApiErrorCode, ApiTimestamp,
+    ArchiveSquadRequest, ArchiveSquadResponse, AvailabilityDto, AvailabilitySourceDto,
+    CreateSquadRequest, ErrorBody, ErrorEnvelope, HeartbeatRequest, HeartbeatResponse, InboxQuery,
+    InboxResponse, IssuedSessionHeaders, JoinSquadRequest, LeaveSquadRequest, LeaveSquadResponse,
+    MembershipStateDto, MessageDto, MessagePriorityDto, MessageSequence, ResumeSquadRequest,
+    RosterResponse, SendMessageRequest, SendMessageResponse, SessionCredential, SessionResponse,
+    SquadStateDto, SquadSummary, TranscriptQuery, TranscriptResponse, TransportPresenceDto,
+    Validate, encode_bounded_inbox,
 };
 use psst_store::{
-    AuthenticatedSession, CreateSquad, InstanceRecord, JoinAndClaim, JoinAndClaimOutcome,
-    JoinMembership, LeasePolicy, LeaveOutcome, MembershipRecord, MessageRecord, RepositoryError,
-    RosterMember, SendMessage, SessionContext, SquadRecord, TranscriptQuery, TransportPresence,
+    AuthenticatedSession, CreateSquad, InboxPage, InstanceRecord, JoinAndClaim,
+    JoinAndClaimOutcome, JoinMembership, LeasePolicy, LeaveOutcome, MembershipRecord, MessageView,
+    RepositoryError, RosterMember, SendByName, SendOutcome, SessionContext, SquadRecord,
+    TranscriptByName, TransportPresence,
 };
 use serde::Serialize;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -83,7 +88,7 @@ impl RelayConfig {
             queue_capacity: DEFAULT_QUEUE_CAPACITY,
             request_timeout: Duration::from_secs(5),
             shutdown_timeout: Duration::from_secs(10),
-            max_body_bytes: 128 * 1024,
+            max_body_bytes: 512 * 1024,
             max_connections: 128,
             max_in_flight_requests: 128,
             log_format: LogFormat::Text,
@@ -217,6 +222,8 @@ enum StoreCommand {
         release: std::sync::mpsc::Receiver<()>,
         reply: oneshot::Sender<Result<(), WorkerError>>,
     },
+    #[cfg(test)]
+    DelayNextSendReply(Duration, oneshot::Sender<Result<(), WorkerError>>),
     Join(
         WorkerJoin,
         oneshot::Sender<Result<JoinAndClaimOutcome, RepositoryError>>,
@@ -243,13 +250,13 @@ enum StoreCommand {
     ),
     Send(
         Credential,
-        SendMessage,
-        oneshot::Sender<Result<MessageRecord, RepositoryError>>,
+        SendByName,
+        oneshot::Sender<Result<SendOutcome, RepositoryError>>,
     ),
     Pending(
         Credential,
         usize,
-        oneshot::Sender<Result<Vec<MessageRecord>, RepositoryError>>,
+        oneshot::Sender<Result<InboxPage, RepositoryError>>,
     ),
     Acknowledge(
         Credential,
@@ -258,8 +265,8 @@ enum StoreCommand {
     ),
     Transcript(
         Credential,
-        TranscriptQuery,
-        oneshot::Sender<Result<Vec<MessageRecord>, RepositoryError>>,
+        TranscriptByName,
+        oneshot::Sender<Result<Vec<MessageView>, RepositoryError>>,
     ),
     Leave(
         Credential,
@@ -288,6 +295,10 @@ impl StoreCommand {
             }
             #[cfg(test)]
             Self::ControlledBlock { reply, .. } => {
+                let _ = reply.send(Err(WorkerError::Unavailable));
+            }
+            #[cfg(test)]
+            Self::DelayNextSendReply(_, reply) => {
                 let _ = reply.send(Err(WorkerError::Unavailable));
             }
             Self::Ready(reply) | Self::Checkpoint(reply) => {
@@ -430,6 +441,8 @@ impl StoreWorker {
             .name("psst-sqlite".into())
             .spawn(move || {
                 let mut store = store;
+                #[cfg(test)]
+                let mut next_send_reply_delay = None;
                 while let Ok(command) = receiver.recv() {
                     if worker_shutdown.load(Ordering::Acquire) {
                         command.cancel();
@@ -453,6 +466,11 @@ impl StoreWorker {
                             let _ = started.send(());
                             let result = release.recv().map_err(|_| WorkerError::Unavailable);
                             let _ = reply.send(result);
+                        }
+                        #[cfg(test)]
+                        StoreCommand::DelayNextSendReply(delay, reply) => {
+                            next_send_reply_delay = Some(delay);
+                            let _ = reply.send(Ok(()));
                         }
                         StoreCommand::Join(request, reply) => {
                             let now = clock.now();
@@ -503,15 +521,19 @@ impl StoreWorker {
                                 policy,
                             ));
                         }
-                        StoreCommand::Send(credential, mut request, reply) => {
+                        StoreCommand::Send(credential, request, reply) => {
                             let now = clock.now();
-                            request.created_at = now;
                             let session = session(&credential, now);
-                            let _ = reply.send(store.authenticated_send(&session, &request));
+                            let result = store.authenticated_send_by_name(&session, &request);
+                            #[cfg(test)]
+                            if let Some(delay) = next_send_reply_delay.take() {
+                                std::thread::sleep(delay);
+                            }
+                            let _ = reply.send(result);
                         }
                         StoreCommand::Pending(credential, limit, reply) => {
                             let session = session(&credential, clock.now());
-                            let _ = reply.send(store.authenticated_pending(&session, limit));
+                            let _ = reply.send(store.authenticated_pending_page(&session, limit));
                         }
                         StoreCommand::Acknowledge(credential, ids, reply) => {
                             let session = session(&credential, clock.now());
@@ -519,7 +541,8 @@ impl StoreWorker {
                         }
                         StoreCommand::Transcript(credential, query, reply) => {
                             let session = session(&credential, clock.now());
-                            let _ = reply.send(store.authenticated_transcript(&session, &query));
+                            let _ =
+                                reply.send(store.authenticated_transcript_views(&session, &query));
                         }
                         StoreCommand::Leave(credential, squad, reply) => {
                             let session = session(&credential, clock.now());
@@ -614,6 +637,12 @@ impl StoreWorker {
         .await
     }
 
+    #[cfg(test)]
+    async fn delay_next_send_reply(&self, delay: Duration) -> Result<(), WorkerError> {
+        self.request(|reply| StoreCommand::DelayNextSendReply(delay, reply))
+            .await
+    }
+
     pub async fn join(&self, request: WorkerJoin) -> Result<JoinAndClaimOutcome, DispatchError> {
         self.dispatch(|reply| StoreCommand::Join(request, reply))
             .await
@@ -651,8 +680,8 @@ impl StoreWorker {
     pub async fn send(
         &self,
         credential: Credential,
-        request: SendMessage,
-    ) -> Result<MessageRecord, DispatchError> {
+        request: SendByName,
+    ) -> Result<SendOutcome, DispatchError> {
         self.dispatch(|reply| StoreCommand::Send(credential, request, reply))
             .await
     }
@@ -660,7 +689,7 @@ impl StoreWorker {
         &self,
         credential: Credential,
         limit: usize,
-    ) -> Result<Vec<MessageRecord>, DispatchError> {
+    ) -> Result<InboxPage, DispatchError> {
         self.dispatch(|reply| StoreCommand::Pending(credential, limit, reply))
             .await
     }
@@ -675,8 +704,8 @@ impl StoreWorker {
     pub async fn transcript(
         &self,
         credential: Credential,
-        query: TranscriptQuery,
-    ) -> Result<Vec<MessageRecord>, DispatchError> {
+        query: TranscriptByName,
+    ) -> Result<Vec<MessageView>, DispatchError> {
         self.dispatch(|reply| StoreCommand::Transcript(credential, query, reply))
             .await
     }
@@ -796,7 +825,7 @@ struct StatusBody {
 }
 
 pub fn router(worker: StoreWorker) -> Router {
-    router_with_limits(worker, 128 * 1024, 128, Duration::from_secs(5))
+    router_with_limits(worker, 512 * 1024, 128, Duration::from_secs(5))
 }
 
 pub fn router_with_limits(
@@ -817,6 +846,10 @@ pub fn router_with_limits(
             .route("/v1/squads/{squad}/leave", post(leave_squad))
             .route("/v1/squads/{squad}/roster", get(roster))
             .route("/v1/heartbeat", post(heartbeat))
+            .route("/v1/messages", post(send_message))
+            .route("/v1/inbox", get(inbox))
+            .route("/v1/messages/ack", post(acknowledge_messages))
+            .route("/v1/squads/{squad}/transcript", get(transcript))
             .with_state(AppState { worker }),
         max_body,
         max_in_flight,
@@ -993,6 +1026,20 @@ where
                     ApiErrorCode::InvalidRequest
                 })
             })
+    }
+}
+struct ApiQuery<T>(T);
+impl<S, T> FromRequestParts<S> for ApiQuery<T>
+where
+    S: Send + Sync,
+    T: serde::de::DeserializeOwned,
+{
+    type Rejection = ApiFailure;
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        Query::<T>::from_request_parts(parts, state)
+            .await
+            .map(|Query(value)| Self(value))
+            .map_err(|_| ApiFailure(ApiErrorCode::InvalidRequest))
     }
 }
 impl IntoResponse for ApiFailure {
@@ -1377,6 +1424,162 @@ async fn heartbeat(
     Ok(Json(HeartbeatResponse {
         lease_expires_at: timestamp(record.lease_expires_at)?,
         heartbeat_interval_seconds: seconds(record.heartbeat_interval)?,
+    }))
+}
+
+fn priority(value: MessagePriorityDto) -> MessagePriority {
+    match value {
+        MessagePriorityDto::Normal => MessagePriority::Normal,
+        MessagePriorityDto::High => MessagePriority::High,
+    }
+}
+
+fn priority_dto(value: MessagePriority) -> MessagePriorityDto {
+    match value {
+        MessagePriority::Normal => MessagePriorityDto::Normal,
+        MessagePriority::High => MessagePriorityDto::High,
+    }
+}
+
+fn message_dto(value: MessageView) -> Result<MessageDto, ApiFailure> {
+    Ok(MessageDto {
+        sequence: MessageSequence::new(value.message.sequence)
+            .map_err(|_| ApiFailure(ApiErrorCode::InternalError))?,
+        id: value.message.id.to_string(),
+        squad: value.squad.to_string(),
+        sender: value.sender.to_string(),
+        recipient: value.recipient.to_string(),
+        body: value.message.semantics.body.as_str().to_owned(),
+        priority: priority_dto(value.message.semantics.priority),
+        reply_to: value.message.semantics.reply_to.map(|id| id.to_string()),
+        correlation_id: value
+            .message
+            .semantics
+            .correlation_id
+            .map(|id| id.to_string()),
+        created_at: timestamp(value.message.created_at)?,
+        acknowledged_at: value.acknowledged_at.map(timestamp).transpose()?,
+    })
+}
+
+async fn send_message(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ApiJson(request): ApiJson<SendMessageRequest>,
+) -> Result<Json<SendMessageResponse>, ApiFailure> {
+    if request.body.len() > MessageBody::MAX_BYTES {
+        return Err(ApiFailure(ApiErrorCode::PayloadTooLarge));
+    }
+    request
+        .validate()
+        .map_err(|_| ApiFailure(ApiErrorCode::InvalidRequest))?;
+    let outcome = state
+        .worker
+        .send(
+            credential(&headers)?,
+            SendByName {
+                id: identifier("msg", MessageId::new)?,
+                recipient: parsed(MemberName::new(request.recipient))?,
+                body: parsed(MessageBody::new(request.body))?,
+                priority: priority(request.priority),
+                dedupe_key: parsed(DedupeKey::new(request.dedupe_key))?,
+                reply_to: request
+                    .reply_to
+                    .map(MessageId::new)
+                    .transpose()
+                    .map_err(|_| ApiFailure(ApiErrorCode::InvalidRequest))?,
+                correlation_id: request
+                    .correlation_id
+                    .map(CorrelationId::new)
+                    .transpose()
+                    .map_err(|_| ApiFailure(ApiErrorCode::InvalidRequest))?,
+            },
+        )
+        .await?;
+    Ok(Json(SendMessageResponse {
+        message: message_dto(outcome.message)?,
+        idempotent_replay: outcome.idempotent_replay,
+    }))
+}
+
+async fn inbox(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ApiQuery(query): ApiQuery<InboxQuery>,
+) -> Result<Response, ApiFailure> {
+    if !(1..=100).contains(&query.limit) || query.wait_seconds != 0 {
+        return Err(ApiFailure(ApiErrorCode::InvalidRequest));
+    }
+    let page = state
+        .worker
+        .pending(credential(&headers)?, usize::from(query.limit))
+        .await?;
+    let response = InboxResponse {
+        messages: page
+            .messages
+            .into_iter()
+            .map(message_dto)
+            .collect::<Result<Vec<_>, _>>()?,
+        pending_count: page.pending_count,
+    };
+    let encoded =
+        encode_bounded_inbox(&response).map_err(|_| ApiFailure(ApiErrorCode::PayloadTooLarge))?;
+    Ok((
+        [("content-type", psst_protocol::JSON_CONTENT_TYPE)],
+        encoded,
+    )
+        .into_response())
+}
+
+async fn acknowledge_messages(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ApiJson(request): ApiJson<AckMessagesRequest>,
+) -> Result<Json<AckMessagesResponse>, ApiFailure> {
+    request
+        .validate()
+        .map_err(|_| ApiFailure(ApiErrorCode::InvalidRequest))?;
+    let mut seen = HashSet::with_capacity(request.message_ids.len());
+    let mut acknowledged_ids = Vec::with_capacity(request.message_ids.len());
+    let mut ids = Vec::with_capacity(request.message_ids.len());
+    for value in request.message_ids {
+        let id = parsed(MessageId::new(value.clone()))?;
+        if seen.insert(id.clone()) {
+            acknowledged_ids.push(value);
+            ids.push(id);
+        }
+    }
+    state.worker.acknowledge(credential(&headers)?, ids).await?;
+    Ok(Json(AckMessagesResponse { acknowledged_ids }))
+}
+
+async fn transcript(
+    State(state): State<AppState>,
+    AxumPath(squad): AxumPath<String>,
+    headers: HeaderMap,
+    ApiQuery(query): ApiQuery<TranscriptQuery>,
+) -> Result<Json<TranscriptResponse>, ApiFailure> {
+    if !(1..=100).contains(&query.limit) {
+        return Err(ApiFailure(ApiErrorCode::InvalidRequest));
+    }
+    let messages = state
+        .worker
+        .transcript(
+            credential(&headers)?,
+            TranscriptByName {
+                squad: parsed(SquadName::new(squad))?,
+                after: query.after.value(),
+                limit: usize::from(query.limit),
+            },
+        )
+        .await?
+        .into_iter()
+        .map(message_dto)
+        .collect::<Result<Vec<_>, _>>()?;
+    let next_after = messages.last().map(|message| message.sequence);
+    Ok(Json(TranscriptResponse {
+        messages,
+        next_after,
     }))
 }
 
@@ -2337,6 +2540,23 @@ mod tests {
         response
     }
 
+    async fn raw_get_authorized(address: SocketAddr, path: &str, credential: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        stream
+            .write_all(
+                format!(
+                    "GET {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {credential}\r\nConnection: close\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        response
+    }
+
     async fn raw_post(
         address: SocketAddr,
         path: &str,
@@ -2363,6 +2583,80 @@ mod tests {
             let (header, value) = line.split_once(':')?;
             header.eq_ignore_ascii_case(name).then(|| value.trim())
         })
+    }
+
+    fn raw_response_json(response: &str) -> serde_json::Value {
+        let (_, body) = response.split_once("\r\n\r\n").unwrap();
+        serde_json::from_str(body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn bound_clients_atomically_deduplicate_send_and_acknowledgement() {
+        let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = reservation.local_addr().unwrap();
+        drop(reservation);
+        let directory = tempfile::TempDir::new().unwrap();
+        let database = directory.path().join("psst.db");
+        let mut config = RelayConfig::local(&database);
+        config.bind = address;
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let task = tokio::spawn(serve(config, shutdown_rx));
+        for _ in 0..50 {
+            if tokio::net::TcpStream::connect(address).await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let alice = raw_post(
+            address,
+            "/v1/squads/alpha/join",
+            None,
+            r#"{"name":"alice","role":"test","mode":"cooperative","client":{"kind":"test"},"mission":"bound messaging"}"#,
+        )
+        .await;
+        let alice = response_header(&alice, "psst-session-credential")
+            .unwrap()
+            .to_owned();
+        let bob = raw_post(
+            address,
+            "/v1/squads/alpha/join",
+            None,
+            r#"{"name":"bob","role":"test","mode":"cooperative","client":{"kind":"test"}}"#,
+        )
+        .await;
+        let bob = response_header(&bob, "psst-session-credential")
+            .unwrap()
+            .to_owned();
+        let send = r#"{"recipient":"bob","body":"once","dedupe_key":"bound-once"}"#;
+        let (first, second) = tokio::join!(
+            raw_post(address, "/v1/messages", Some(&alice), send),
+            raw_post(address, "/v1/messages", Some(&alice), send)
+        );
+        assert!(first.starts_with("HTTP/1.1 200"));
+        assert!(second.starts_with("HTTP/1.1 200"));
+        let first = raw_response_json(&first);
+        let second = raw_response_json(&second);
+        assert_eq!(first["message"]["id"], second["message"]["id"]);
+        assert_ne!(first["idempotent_replay"], second["idempotent_replay"]);
+        let id = first["message"]["id"].as_str().unwrap();
+        let ack = format!(r#"{{"message_ids":["{id}"]}}"#);
+        let (first, second) = tokio::join!(
+            raw_post(address, "/v1/messages/ack", Some(&bob), &ack),
+            raw_post(address, "/v1/messages/ack", Some(&bob), &ack)
+        );
+        assert!(first.starts_with("HTTP/1.1 200"));
+        assert!(second.starts_with("HTTP/1.1 200"));
+        shutdown_tx.send(true).unwrap();
+        task.await.unwrap().unwrap();
+        let connection = rusqlite::Connection::open(database).unwrap();
+        let (rows, acknowledged): (u64, u64) = connection
+            .query_row(
+                "SELECT COUNT(*), COUNT(acknowledged_at) FROM messages",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((rows, acknowledged), (1, 1));
     }
 
     #[tokio::test]
@@ -2593,5 +2887,545 @@ mod tests {
         assert!(!json_logs.contains("resume-token-never-log"));
         assert!(!json_logs.contains("body-secret-never-log"));
         assert!(!json_logs.to_ascii_lowercase().contains("authorization"));
+    }
+
+    async fn join_for_messaging(app: Router, squad: &str, name: &str, mission: bool) -> String {
+        let mission = if mission {
+            r#", "mission":"message tests""#
+        } else {
+            ""
+        };
+        let body = format!(
+            r#"{{"name":"{name}","role":"tester","mode":"cooperative","client":{{"kind":"test"}}{mission}}}"#
+        );
+        let (status, headers, _) = json_request(
+            app,
+            Request::post(format!("/v1/squads/{squad}/join"))
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        headers
+            .get("psst-session-credential")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn messaging_http_is_durable_replayable_bounded_and_path_authorized() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let path = directory.path().join("psst.db");
+        let clock = Arc::new(FakeTime(UnixMillis::new(100).unwrap()));
+        let (worker, handle) =
+            StoreWorker::start_with_time(&path, 32, Duration::from_secs(2), clock.clone()).unwrap();
+        let app = router(worker.clone());
+        let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
+        let bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
+        let mallory = join_for_messaging(app.clone(), "beta", "mallory", true).await;
+
+        let send_body = r#"{"recipient":"bob","body":"hello","priority":"high","dedupe_key":"logical-1","correlation_id":"thread-1"}"#;
+        let send_request = || {
+            Request::post("/v1/messages")
+                .header("authorization", format!("Bearer {alice}"))
+                .header("content-type", "application/json")
+                .body(Body::from(send_body))
+                .unwrap()
+        };
+        let first = tokio::spawn(json_request(app.clone(), send_request()));
+        let second = tokio::spawn(json_request(app.clone(), send_request()));
+        let (_, _, first) = first.await.unwrap();
+        let (_, _, second) = second.await.unwrap();
+        assert_eq!(first["message"]["id"], second["message"]["id"]);
+        assert_ne!(first["idempotent_replay"], second["idempotent_replay"]);
+        let message_id = first["message"]["id"].as_str().unwrap().to_owned();
+        assert_eq!(first["message"]["sender"], "alice");
+        assert_eq!(first["message"]["recipient"], "bob");
+
+        for _ in 0..2 {
+            let (status, _, inbox) = json_request(
+                app.clone(),
+                Request::get("/v1/inbox?limit=1&wait=0")
+                    .header("authorization", format!("Bearer {bob}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(inbox["pending_count"], 1);
+            assert_eq!(inbox["messages"][0]["id"], message_id);
+            assert!(inbox["messages"][0]["acknowledged_at"].is_null());
+        }
+
+        let (status, _, wrong_squad) = json_request(
+            app.clone(),
+            Request::get("/v1/squads/alpha/transcript?after=0&limit=100")
+                .header("authorization", format!("Bearer {mallory}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(wrong_squad["error"]["code"], "not_member");
+
+        let ack_body =
+            format!(r#"{{"message_ids":["{message_id}","msg_unknown","{message_id}"]}}"#);
+        let (status, _, failed_ack) = json_request(
+            app.clone(),
+            Request::post("/v1/messages/ack")
+                .header("authorization", format!("Bearer {bob}"))
+                .header("content-type", "application/json")
+                .body(Body::from(ack_body))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(failed_ack["error"]["code"], "not_found");
+        let ack_body = format!(r#"{{"message_ids":["{message_id}","{message_id}"]}}"#);
+        let (status, _, acked) = json_request(
+            app.clone(),
+            Request::post("/v1/messages/ack")
+                .header("authorization", format!("Bearer {bob}"))
+                .header("content-type", "application/json")
+                .body(Body::from(ack_body))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(acked["acknowledged_ids"].as_array().unwrap().len(), 1);
+        assert!(acked.get("acknowledged_at").is_none());
+
+        let (status, _, transcript) = json_request(
+            app.clone(),
+            Request::get("/v1/squads/alpha/transcript?after=0&limit=1")
+                .header("authorization", format!("Bearer {alice}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(transcript["messages"][0]["id"], message_id);
+        assert!(transcript["messages"][0]["acknowledged_at"].is_string());
+        let cursor = transcript["next_after"].as_i64().unwrap();
+        let (status, _, empty) = json_request(
+            app.clone(),
+            Request::get(format!(
+                "/v1/squads/alpha/transcript?after={cursor}&limit=1"
+            ))
+            .header("authorization", format!("Bearer {alice}"))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(empty["messages"].as_array().unwrap().is_empty());
+
+        for uri in [
+            "/v1/inbox?limit=0&wait=0",
+            "/v1/inbox?limit=1&wait=1",
+            "/v1/inbox?limit=overflow&wait=0",
+            "/v1/squads/alpha/transcript?after=-1&limit=1",
+            "/v1/squads/alpha/transcript?after=0&limit=101",
+        ] {
+            let (status, _, body) = json_request(
+                app.clone(),
+                Request::get(uri)
+                    .header("authorization", format!("Bearer {alice}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+            assert_eq!(body["error"]["code"], "invalid_request");
+        }
+
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+        let (worker, handle) =
+            StoreWorker::start_with_time(&path, 16, Duration::from_secs(2), clock).unwrap();
+        let (status, _, transcript) = json_request(
+            router(worker.clone()),
+            Request::get("/v1/squads/alpha/transcript?after=0&limit=100")
+                .header("authorization", format!("Bearer {alice}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(transcript["messages"].as_array().unwrap().len(), 1);
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn maximum_utf8_body_survives_json_escaping_and_default_body_limit() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let (worker, handle) = StoreWorker::start(&directory.path().join("psst.db"), 8).unwrap();
+        let app = router(worker.clone());
+        let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
+        let _bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
+        let request_body = serde_json::to_vec(&serde_json::json!({
+            "recipient": "bob",
+            "body": "\u{0001}".repeat(MessageBody::MAX_BYTES),
+            "dedupe_key": "body-bound"
+        }))
+        .unwrap();
+        assert!(request_body.len() > 128 * 1024);
+        let response = app
+            .oneshot(
+                Request::post("/v1/messages")
+                    .header("authorization", format!("Bearer {alice}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            body["message"]["body"].as_str().unwrap().len(),
+            MessageBody::MAX_BYTES
+        );
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn http_retry_after_committed_reply_timeout_returns_the_one_durable_message() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let database = directory.path().join("psst.db");
+        let now = UnixMillis::new(1_234).unwrap();
+        let (worker, handle) = StoreWorker::start_with_time(
+            &database,
+            8,
+            Duration::from_millis(20),
+            Arc::new(FakeTime(now)),
+        )
+        .unwrap();
+        let app = router(worker.clone());
+        let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
+        let _bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
+        worker
+            .delay_next_send_reply(Duration::from_millis(80))
+            .await
+            .unwrap();
+        let request = || {
+            Request::post("/v1/messages")
+                .header("authorization", format!("Bearer {alice}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"recipient":"bob","body":"committed","dedupe_key":"ambiguous-http"}"#,
+                ))
+                .unwrap()
+        };
+        let (status, _, timed_out) = json_request(app.clone(), request()).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(timed_out["error"]["code"], "database_busy");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let (status, _, replay) = json_request(app, request()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(replay["idempotent_replay"], true);
+        assert_eq!(replay["message"]["sequence"], 1);
+        assert_eq!(replay["message"]["created_at"], "1970-01-01T00:00:01.234Z");
+        let connection = rusqlite::Connection::open(&database).unwrap();
+        let (count, id, sequence, created_at): (u64, String, i64, i64) = connection
+            .query_row(
+                "SELECT COUNT(*), id, sequence, created_at FROM messages",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(replay["message"]["id"], id);
+        assert_eq!(replay["message"]["sequence"], sequence);
+        assert_eq!(created_at, now.as_i64());
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn exact_http_retry_survives_recipient_leave_and_name_reuse_without_retargeting() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let database = directory.path().join("psst.db");
+        let (worker, handle) = StoreWorker::start(&database, 16).unwrap();
+        let app = router(worker.clone());
+        let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
+        let bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
+        let request_body = r#"{"recipient":"bob","body":"original","dedupe_key":"name-reuse"}"#;
+        let request = || {
+            Request::post("/v1/messages")
+                .header("authorization", format!("Bearer {alice}"))
+                .header("content-type", "application/json")
+                .body(Body::from(request_body))
+                .unwrap()
+        };
+        let (status, _, original) = json_request(app.clone(), request()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(original["idempotent_replay"], false);
+        let original_id = original["message"]["id"].as_str().unwrap().to_owned();
+        let original_recipient: String = rusqlite::Connection::open(&database)
+            .unwrap()
+            .query_row(
+                "SELECT recipient_membership_id FROM messages WHERE id=?1",
+                [&original_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let (status, _, _) = json_request(
+            app.clone(),
+            Request::post("/v1/squads/alpha/leave")
+                .header("authorization", format!("Bearer {bob}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let _replacement_bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
+        let active_recipient: String = rusqlite::Connection::open(&database)
+            .unwrap()
+            .query_row(
+                "SELECT id FROM memberships WHERE normalized_name='bob' AND left_at IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_ne!(active_recipient, original_recipient);
+
+        let (status, _, replay) = json_request(app.clone(), request()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(replay["idempotent_replay"], true);
+        assert_eq!(replay["message"]["id"], original_id);
+        let (rows, durable_recipient): (u64, String) = rusqlite::Connection::open(&database)
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*), recipient_membership_id FROM messages",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(rows, 1);
+        assert_eq!(durable_recipient, original_recipient);
+        assert_ne!(durable_recipient, active_recipient);
+
+        let (status, _, conflict) = json_request(
+            app,
+            Request::post("/v1/messages")
+                .header("authorization", format!("Bearer {alice}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"recipient":"bob","body":"changed","dedupe_key":"name-reuse"}"#,
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(conflict["error"]["code"], "idempotency_conflict");
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn real_http_offline_restart_replay_ack_restart_journey_is_durable() {
+        let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = reservation.local_addr().unwrap();
+        drop(reservation);
+        let directory = tempfile::TempDir::new().unwrap();
+        let database = directory.path().join("psst.db");
+        let start = |shutdown_rx| {
+            let mut config = RelayConfig::local(&database);
+            config.bind = address;
+            tokio::spawn(serve(config, shutdown_rx))
+        };
+        let wait_ready = || async {
+            for _ in 0..100 {
+                if tokio::net::TcpStream::connect(address).await.is_ok() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            panic!("relay did not bind");
+        };
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let task = start(shutdown_rx);
+        wait_ready().await;
+        let alice = raw_post(
+            address,
+            "/v1/squads/alpha/join",
+            None,
+            r#"{"name":"alice","role":"test","mode":"cooperative","client":{"kind":"test"},"mission":"restart journey"}"#,
+        )
+        .await;
+        let alice = response_header(&alice, "psst-session-credential")
+            .unwrap()
+            .to_owned();
+        let bob = raw_post(
+            address,
+            "/v1/squads/alpha/join",
+            None,
+            r#"{"name":"bob","role":"test","mode":"cooperative","client":{"kind":"test"}}"#,
+        )
+        .await;
+        let bob = response_header(&bob, "psst-session-credential")
+            .unwrap()
+            .to_owned();
+        let sent = raw_post(
+            address,
+            "/v1/messages",
+            Some(&alice),
+            r#"{"recipient":"bob","body":"offline durable","dedupe_key":"restart-mail"}"#,
+        )
+        .await;
+        assert!(sent.starts_with("HTTP/1.1 200"));
+        let message_id = raw_response_json(&sent)["message"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        shutdown_tx.send(true).unwrap();
+        task.await.unwrap().unwrap();
+
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let task = start(shutdown_rx);
+        wait_ready().await;
+        for _ in 0..2 {
+            let inbox = raw_get_authorized(address, "/v1/inbox?limit=100&wait=0", &bob).await;
+            assert!(inbox.starts_with("HTTP/1.1 200"));
+            let inbox = raw_response_json(&inbox);
+            assert_eq!(inbox["pending_count"], 1);
+            assert_eq!(inbox["messages"][0]["id"], message_id);
+        }
+        let ack = raw_post(
+            address,
+            "/v1/messages/ack",
+            Some(&bob),
+            &format!(r#"{{"message_ids":["{message_id}"]}}"#),
+        )
+        .await;
+        assert!(ack.starts_with("HTTP/1.1 200"));
+        shutdown_tx.send(true).unwrap();
+        task.await.unwrap().unwrap();
+
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let task = start(shutdown_rx);
+        wait_ready().await;
+        let inbox = raw_get_authorized(address, "/v1/inbox?limit=100&wait=0", &bob).await;
+        let inbox = raw_response_json(&inbox);
+        assert_eq!(inbox["pending_count"], 0);
+        assert!(inbox["messages"].as_array().unwrap().is_empty());
+        let transcript = raw_get_authorized(
+            address,
+            "/v1/squads/alpha/transcript?after=0&limit=100",
+            &alice,
+        )
+        .await;
+        let transcript = raw_response_json(&transcript);
+        assert_eq!(transcript["messages"][0]["id"], message_id);
+        assert!(transcript["messages"][0]["acknowledged_at"].is_string());
+        shutdown_tx.send(true).unwrap();
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn projected_http_inbox_truncates_under_one_mib_and_preserves_omitted_mail() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let (worker, handle) = StoreWorker::start(&directory.path().join("psst.db"), 32).unwrap();
+        let app = router(worker.clone());
+        let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
+        let bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
+        let large_body = "\u{0001}".repeat(MessageBody::MAX_BYTES);
+        for index in 0..4 {
+            let body = serde_json::to_vec(&serde_json::json!({
+                "recipient": "bob",
+                "body": large_body,
+                "dedupe_key": format!("large-{index}")
+            }))
+            .unwrap();
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post("/v1/messages")
+                        .header("authorization", format!("Bearer {alice}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get("/v1/inbox?limit=100&wait=0")
+                    .header("authorization", format!("Bearer {bob}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let encoded = to_bytes(response.into_body(), 2 * 1024 * 1024)
+            .await
+            .unwrap();
+        assert!(encoded.len() <= psst_protocol::MAX_INBOX_BYTES);
+        let first: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(first["pending_count"], 4);
+        let returned = first["messages"].as_array().unwrap();
+        assert!(!returned.is_empty());
+        assert!(returned.len() < 4);
+        let first_ids = returned
+            .iter()
+            .map(|message| message["id"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        let ack = serde_json::to_vec(&serde_json::json!({"message_ids": first_ids})).unwrap();
+        let (status, _, _) = json_request(
+            app.clone(),
+            Request::post("/v1/messages/ack")
+                .header("authorization", format!("Bearer {bob}"))
+                .header("content-type", "application/json")
+                .body(Body::from(ack))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let response = app
+            .oneshot(
+                Request::get("/v1/inbox?limit=100&wait=0")
+                    .header("authorization", format!("Bearer {bob}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let encoded = to_bytes(response.into_body(), 2 * 1024 * 1024)
+            .await
+            .unwrap();
+        assert!(encoded.len() <= psst_protocol::MAX_INBOX_BYTES);
+        let second: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(
+            second["pending_count"],
+            4_u64 - u64::try_from(first_ids.len()).unwrap()
+        );
+        assert!(!second["messages"].as_array().unwrap().is_empty());
+        assert!(
+            second["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|message| {
+                    !first_ids
+                        .iter()
+                        .any(|id| id == message["id"].as_str().unwrap())
+                })
+        );
+        worker.begin_shutdown();
+        handle.join().unwrap().unwrap();
     }
 }

@@ -17,8 +17,6 @@ components:
       type: object
     AckMessagesResponse:
       properties:
-        acknowledged_at:
-          $ref: '#/components/schemas/ApiTimestamp'
         acknowledged_ids:
           items:
             maxLength: 128
@@ -28,7 +26,6 @@ components:
           type: array
       required:
       - acknowledged_ids
-      - acknowledged_at
       type: object
     AgentModeDto:
       enum:

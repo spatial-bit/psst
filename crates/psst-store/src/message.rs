@@ -175,7 +175,7 @@ fn authorize_reply(
     }
 }
 
-fn find_by_dedupe(
+pub(crate) fn find_by_dedupe(
     transaction: &Transaction<'_>,
     request: &SendMessage,
 ) -> Result<Option<MessageRecord>, RepositoryError> {

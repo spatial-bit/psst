@@ -238,6 +238,15 @@ mod tests {
                 ["schema"]["const"],
             "no-store"
         );
+        assert_eq!(
+            value["paths"]["/v1/messages/ack"]["post"]["security"][0]["sessionCredential"],
+            json!([])
+        );
+        assert!(
+            schemas["AckMessagesResponse"]["properties"]
+                .get("acknowledged_at")
+                .is_none()
+        );
     }
     #[test]
     fn secret_material_is_absent_from_body_schemas() {
