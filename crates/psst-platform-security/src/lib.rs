@@ -115,14 +115,16 @@ pub fn verify_restricted_file(file: &File, sid: &str) -> io::Result<()> {
     use windows_sys::Win32::{
         Foundation::LocalFree,
         Security::{
-            Authorization::{
-                ConvertSecurityDescriptorToStringSecurityDescriptorW, GetSecurityInfo,
-                SDDL_REVISION_1, SE_FILE_OBJECT,
-            },
-            DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+            ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
+            Authorization::{ConvertStringSidToSidW, GetSecurityInfo, SE_FILE_OBJECT},
+            DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation,
+            GetSecurityDescriptorControl, PROTECTED_DACL_SECURITY_INFORMATION,
+            PSECURITY_DESCRIPTOR, PSID, SE_DACL_PRESENT, SE_DACL_PROTECTED,
         },
+        Storage::FileSystem::FILE_ALL_ACCESS,
     };
     let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+    let mut dacl: *mut ACL = ptr::null_mut();
     let status = unsafe {
         GetSecurityInfo(
             file.as_raw_handle(),
@@ -130,7 +132,7 @@ pub fn verify_restricted_file(file: &File, sid: &str) -> io::Result<()> {
             DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
             ptr::null_mut(),
             ptr::null_mut(),
-            ptr::null_mut(),
+            &raw mut dacl,
             ptr::null_mut(),
             &raw mut descriptor,
         )
@@ -140,31 +142,47 @@ pub fn verify_restricted_file(file: &File, sid: &str) -> io::Result<()> {
             i32::try_from(status).unwrap_or(i32::MAX),
         ));
     }
-    let mut text = ptr::null_mut();
-    let mut len = 0;
-    let ok = unsafe {
-        ConvertSecurityDescriptorToStringSecurityDescriptorW(
-            descriptor,
-            SDDL_REVISION_1,
-            DACL_SECURITY_INFORMATION,
-            &raw mut text,
-            &raw mut len,
-        )
-    };
-    let actual = if ok == 0 {
-        None
+    let mut control = 0_u16;
+    let mut revision = 0_u32;
+    let mut size = ACL_SIZE_INFORMATION::default();
+    let mut ace = ptr::null_mut();
+    let sid_text: Vec<u16> = sid.encode_utf16().chain(Some(0)).collect();
+    let mut expected_sid: PSID = ptr::null_mut();
+    let control_ok =
+        unsafe { GetSecurityDescriptorControl(descriptor, &raw mut control, &raw mut revision) }
+            != 0;
+    let acl_ok = !dacl.is_null()
+        && unsafe {
+            GetAclInformation(
+                dacl,
+                (&raw mut size).cast(),
+                u32::try_from(std::mem::size_of::<ACL_SIZE_INFORMATION>()).unwrap_or(u32::MAX),
+                AclSizeInformation,
+            )
+        } != 0;
+    let single_ace_ok =
+        acl_ok && size.AceCount == 1 && unsafe { GetAce(dacl, 0, &raw mut ace) } != 0;
+    let sid_ok = unsafe { ConvertStringSidToSidW(sid_text.as_ptr(), &raw mut expected_sid) } != 0;
+    let exact = if single_ace_ok && sid_ok {
+        let allowed = ace.cast::<ACCESS_ALLOWED_ACE>();
+        let ace_sid = unsafe { (&raw const (*allowed).SidStart).cast_mut().cast() };
+        control_ok
+            && control & SE_DACL_PRESENT != 0
+            && control & SE_DACL_PROTECTED != 0
+            && unsafe {
+                (*allowed).Header.AceType == 0
+                    && (*allowed).Header.AceFlags == 0
+                    && (*allowed).Mask == FILE_ALL_ACCESS
+                    && EqualSid(ace_sid, expected_sid) != 0
+            }
     } else {
-        Some(String::from_utf16_lossy(unsafe {
-            std::slice::from_raw_parts(text, len as usize)
-        }))
+        false
     };
     unsafe {
-        LocalFree(text.cast());
+        LocalFree(expected_sid.cast());
         LocalFree(descriptor);
     }
-    if actual.as_deref().map(|value| value.trim_end_matches('\0'))
-        == Some(format!("D:P(A;;FA;;;{sid})").as_str())
-    {
+    if exact {
         Ok(())
     } else {
         Err(io::Error::new(
