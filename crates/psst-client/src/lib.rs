@@ -17,6 +17,9 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::{fmt, future::Future, pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
 
+mod credential_store;
+pub use credential_store::{CredentialBinding, CredentialFault, CredentialStore};
+
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 /// Explicit network and retry bounds.

@@ -66,6 +66,18 @@ surrounding prose. Every envelope identifies the command. Exit classes are `0` s
 redacted local authentication-state enum; profile views expose binding identifiers but no private
 authentication material.
 
+Usage failures detected before an executable command can be selected use the failure-only command
+identity `invocation`. It is never emitted by a success envelope and is not an executable command.
+
+`relay start` is the long-running daemon exception to completion-oriented JSON output. After the
+database is ready and the listener is bound, `--json` writes and flushes exactly one success envelope
+whose data contains `running: true`, effective bind, database path, schema version, trusted-LAN state,
+and the fixed no-TLS warning when applicable. Clean shutdown emits no second document. A fatal error
+before startup uses the ordinary JSON failure envelope; a fatal error after the startup envelope uses
+only a fixed non-JSON stderr diagnostic and nonzero status because a second JSON document would make
+the one-document invocation contract ambiguous. A forced shutdown timeout retains the relay's bounded
+immediate-exit behavior.
+
 The command surface is frozen here, while implementation ownership is explicit: W-302 owns
 configuration/profile commands; W-303 owns relay start and database commands; W-304 owns health;
 W-305 owns squad/message/inbox/transcript/status CLI execution; W-306 owns MCP process/session
@@ -101,9 +113,14 @@ views may expose the enum field `credential_state`, whose values reveal availabi
 
 The W-302 credential-store canary gate has one expected positive location: the single restricted
 credential record owned by the selected profile. The canary must be absent from profile metadata,
-configuration, lock files, atomic-write temporary files after completion, crash remnants, logs,
+configuration, lock files, atomic-write temporary files after completion or after recovery, logs,
 stdout, stderr, test reports, packaged artifacts, and retained CI evidence. W-301 freezes this
 evidence boundary but does not create the record or claim persistence evidence.
+An abrupt process termination may leave one store-recognized same-directory replacement file. It
+must already have the same user-only protection as the credential record before its first secret
+byte is written, and store recovery must remove it before opening the profile for use. The crash
+test may observe the canary only in that protected remnant before recovery and must verify its access
+control before scanning again after recovery.
 
 Structured cancellation covers the rmcp service task and both framing pumps: service startup failure
 cancels and reaps both pumps; the first pump/service failure cancels and reaps its siblings; clean

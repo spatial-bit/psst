@@ -1,27 +1,27 @@
 [package]
-name = "psst-application"
-description = "Non-secret CLI and cooperative MCP contracts for Psst"
+name = "psst-cli"
+description = "Human and operator command line interface for Psst"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "psst"
+path = "src/main.rs"
+
 [dependencies]
+psst-application = { path = "../psst-application" }
 psst-client = { path = "../psst-client" }
 psst-protocol = { path = "../psst-protocol" }
-schemars.workspace = true
+psst-relay = { path = "../psst-relay" }
+psst-store = { path = "../psst-store" }
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml.workspace = true
-fs2.workspace = true
-url.workspace = true
-sha2.workspace = true
-libc.workspace = true
-rustix.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
-sha2.workspace = true
 tempfile.workspace = true
 
 [lints]

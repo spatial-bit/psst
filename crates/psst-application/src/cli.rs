@@ -51,6 +51,8 @@ arguments, environment variables, output, help, diagnostics, configuration, or m
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CliCommand {
+    /// Failure-only identity for usage errors before an executable command is selected.
+    Invocation,
     RelayStart,
     Health,
     ConfigShowEffective,

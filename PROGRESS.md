@@ -50,6 +50,8 @@ Last reconciled: 2026-08-08
 - W-302 configuration, profiles, and credential store.
 - W-304 CLI shell and relay operations.
 - W-306 MCP transport and schema contract.
+- W-306 implementation passes exact-schema/runtime validation, independent stdio transcripts,
+  strict workspace lint, and the 190-test Windows workspace gate; review and cross-platform CI remain pending.
 
 ## Ready
 
