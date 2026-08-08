@@ -1,6 +1,6 @@
 # W-207: Slice 2 relay/client reliability and shutdown gate
 
-Status: active
+Status: verified
 
 ## Objective
 
@@ -50,4 +50,8 @@ No CLI, token persistence, MCP, client scheduler, LAN discovery, harness activat
 
 ## Verification evidence
 
-Pending.
+- Reviewed revision `9bded29`; 162 tests passed locally with formatting and strict Clippy clean.
+- One hundred actual production TCP long polls, disconnect cleanup, shutdown, external writer-lock recovery, exact retry, and same-file restart reconciliation passed.
+- Three 30-second release runs sustained 105 completed messages/second with send p95 below 13 ms and inbox `wait=0` p95 below 2 ms; all 9,451 sends were reconciled exactly across restart.
+- GitHub Actions passed on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31237113554>.
+- Full secret-free methodology and results: `EVIDENCE/W-207-slice-2-reliability.md`.

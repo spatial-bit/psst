@@ -32,14 +32,16 @@ Last reconciled: 2026-08-07
 - W-205 bounded long polling independently approved with 146 passing tests; revision `2273849` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31233081040>.
 - W-206 typed Rust client independently approved with 158 passing tests: complete Slice 2 API coverage, memory-only redacted credentials, bounded transport, total operation deadlines, conservative retries, exact prepared-send idempotency, real ambiguous-commit recovery, and restart/offline/resume E2E evidence.
 - W-206 revision `f1db97c` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31235067734>.
+- W-207 Slice 2 reliability gate independently approved with 162 passing tests, 100 production TCP watchers, exact restart reconciliation, bounded disconnect/shutdown/lock recovery, and repeated release performance above 100 messages/second with p95 below 100 ms.
+- W-207 revision `9bded29` passed GitHub Actions on Windows, Linux, and macOS: <https://github.com/spatial-bit/psst/actions/runs/31237113554>.
 
 ## Active
 
-- W-207 Slice 2 relay/client reliability and shutdown gate.
+- W-208 cross-platform development artifacts.
 
 ## Ready
 
-- W-208 cross-platform development artifacts is ready after W-207.
+- Slice 3 CLI and cooperative MCP work is ready after W-208.
 
 ## Gate evidence
 
@@ -50,4 +52,4 @@ Last reconciled: 2026-08-07
 
 ## Next coordinator action
 
-Execute W-207 stress, fault, performance, restart, cancellation, and shutdown verification; independently review the gate and capture cross-platform CI evidence.
+Produce W-208 cross-platform development artifacts and verify clean local relay startup/installability before closing Slice 2.

@@ -1,6 +1,6 @@
 # W-208: Cross-platform development artifacts
 
-Status: blocked on W-207
+Status: active
 
 ## Objective
 
