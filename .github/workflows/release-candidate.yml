@@ -1,0 +1,261 @@
+name: Alpha release candidate
+
+on:
+  push:
+    tags: ["v0.1.0-alpha.1"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing signed annotated tag to rehearse
+        required: true
+        default: v0.1.0-alpha.1
+
+permissions:
+  contents: read
+
+env:
+  PSST_RELEASE_VERSION: 0.1.0-alpha.1
+  PSST_RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    outputs:
+      revision: ${{ steps.revision.outputs.value }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.PSST_RELEASE_TAG }}
+          fetch-depth: 0
+      - id: revision
+        shell: bash
+        run: echo "value=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Provision pinned release signer trust root
+        shell: bash
+        env:
+          SIGNER_PUBLIC_KEY: ${{ secrets.PSST_RELEASE_SIGNER_PUBLIC_KEY }}
+          SIGNER_FINGERPRINT: ${{ vars.PSST_RELEASE_SIGNER_FINGERPRINT }}
+        run: |
+          test -n "$SIGNER_PUBLIC_KEY" && [[ "$SIGNER_FINGERPRINT" =~ ^[0-9A-Fa-f]{40,64}$ ]]
+          export GNUPGHOME="$RUNNER_TEMP/psst-release-gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          printf '%s' "$SIGNER_PUBLIC_KEY" | gpg --batch --import
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+      - name: Verify signed immutable release identity
+        run: >-
+          python scripts/check-release-version.py
+          --version "${{ env.PSST_RELEASE_VERSION }}"
+          --tag "${{ env.PSST_RELEASE_TAG }}"
+          --revision "$(git rev-parse HEAD)"
+          --verify-signed-tag
+          --authorized-signer-fingerprint "${{ vars.PSST_RELEASE_SIGNER_FINGERPRINT }}"
+
+  build:
+    needs: contract
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x86_64
+            host: x86_64-pc-windows-msvc
+            suffix: .exe
+            extension: zip
+          - os: ubuntu-latest
+            target: linux-x86_64
+            host: x86_64-unknown-linux-gnu
+            suffix: ""
+            extension: tar.gz
+          - os: macos-15
+            target: macos-aarch64
+            host: aarch64-apple-darwin
+            suffix: ""
+            extension: tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.PSST_RELEASE_TAG }}
+          fetch-depth: 0
+      - run: rustup toolchain install 1.89.0 --profile minimal --no-self-update
+      - run: rustup default 1.89.0
+      - shell: bash
+        run: rustc -vV | grep -F "host: ${{ matrix.host }}"
+      - name: Verify release identity on native checkout
+        run: >-
+          python scripts/check-release-version.py
+          --version "${{ env.PSST_RELEASE_VERSION }}"
+          --tag "${{ env.PSST_RELEASE_TAG }}"
+          --revision "${{ needs.contract.outputs.revision }}"
+      - name: Build locked native binaries
+        env:
+          PSST_BUILD_REVISION: ${{ needs.contract.outputs.revision }}
+          PSST_RELEASE_SECRET_CANARY: alpha-release-secret-must-not-ship
+          RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=.
+        run: cargo build --locked --release --package psst-cli --package psst-mcp --package psst-relay
+      - name: Generate stable SPDX SBOM
+        shell: bash
+        run: |
+          cargo metadata --locked --format-version 1 > release-metadata.json
+          python scripts/generate-release-sbom.py --metadata release-metadata.json --output SBOM.spdx.json --version "${{ env.PSST_RELEASE_VERSION }}" --revision "${{ needs.contract.outputs.revision }}"
+      - name: Package deterministic portable archive
+        shell: bash
+        run: >-
+          python scripts/package-release.py
+          --psst "target/release/psst${{ matrix.suffix }}"
+          --psst-mcp "target/release/psst-mcp${{ matrix.suffix }}"
+          --psst-relay "target/release/psst-relay${{ matrix.suffix }}"
+          --license LICENSE --readme docs/release-archive-readme.md --install docs/release-archive-install.md
+          --sbom SBOM.spdx.json --target "${{ matrix.target }}"
+          --revision "${{ needs.contract.outputs.revision }}"
+          --version "${{ env.PSST_RELEASE_VERSION }}"
+          --output "release/psst-v${{ env.PSST_RELEASE_VERSION }}-${{ matrix.target }}.${{ matrix.extension }}"
+      - name: Repack and compare bytes
+        shell: bash
+        run: |
+          cp "release/psst-v${{ env.PSST_RELEASE_VERSION }}-${{ matrix.target }}.${{ matrix.extension }}" first-archive
+          rm "release/psst-v${{ env.PSST_RELEASE_VERSION }}-${{ matrix.target }}.${{ matrix.extension }}"
+          python scripts/package-release.py --psst "target/release/psst${{ matrix.suffix }}" --psst-mcp "target/release/psst-mcp${{ matrix.suffix }}" --psst-relay "target/release/psst-relay${{ matrix.suffix }}" --license LICENSE --readme docs/release-archive-readme.md --install docs/release-archive-install.md --sbom SBOM.spdx.json --target "${{ matrix.target }}" --revision "${{ needs.contract.outputs.revision }}" --version "${{ env.PSST_RELEASE_VERSION }}" --output "release/psst-v${{ env.PSST_RELEASE_VERSION }}-${{ matrix.target }}.${{ matrix.extension }}"
+          cmp first-archive "release/psst-v${{ env.PSST_RELEASE_VERSION }}-${{ matrix.target }}.${{ matrix.extension }}"
+      - name: Hash and scan candidate
+        shell: bash
+        run: |
+          python scripts/inspect-release.py --archive "release/psst-v${{ env.PSST_RELEASE_VERSION }}-${{ matrix.target }}.${{ matrix.extension }}" --version "${{ env.PSST_RELEASE_VERSION }}" --revision "${{ needs.contract.outputs.revision }}" --target "${{ matrix.target }}" --forbidden-canary "${{ github.workspace }}" --forbidden-canary "alpha-release-secret-must-not-ship"
+          python scripts/release-checksums.py --output "release/${{ matrix.target }}.SHA256" "release/psst-v${{ env.PSST_RELEASE_VERSION }}-${{ matrix.target }}.${{ matrix.extension }}"
+          cp scripts/inspect-release.py release/inspect-release.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: alpha-candidate-${{ matrix.target }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 14
+
+  clean-download:
+    needs: [contract, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x86_64
+            suffix: .exe
+            extension: zip
+          - os: ubuntu-latest
+            target: linux-x86_64
+            suffix: ""
+            extension: tar.gz
+          - os: macos-15
+            target: macos-aarch64
+            suffix: ""
+            extension: tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: alpha-candidate-${{ matrix.target }}
+          path: download
+      - name: Verify, install, smoke, restart, and uninstall without checkout or Rust commands
+        shell: pwsh
+        run: |
+          $archive = Resolve-Path "download/psst-v${{ env.PSST_RELEASE_VERSION }}-${{ matrix.target }}.${{ matrix.extension }}"
+          $expectedHash = ((Get-Content "download/${{ matrix.target }}.SHA256") -split '  ')[0]
+          if ((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant() -ne $expectedHash) { throw 'archive checksum mismatch' }
+          python download/inspect-release.py --archive $archive --version "${{ env.PSST_RELEASE_VERSION }}" --revision "${{ needs.contract.outputs.revision }}" --target "${{ matrix.target }}" --forbidden-canary "${{ github.workspace }}" --forbidden-canary "alpha-release-secret-must-not-ship"
+          if ($LASTEXITCODE) { throw 'pre-extraction archive inspection failed' }
+          New-Item -ItemType Directory extracted,install,data,profiles | Out-Null
+          if ('${{ matrix.extension }}' -eq 'zip') { Expand-Archive $archive extracted } else { tar -xzf $archive -C extracted; if ($LASTEXITCODE) { throw 'extract failed' } }
+          $source = Resolve-Path "extracted/psst-v${{ env.PSST_RELEASE_VERSION }}-${{ matrix.target }}"
+          Copy-Item "$source/*" install -Recurse
+          $root = Resolve-Path install
+          $psst = Join-Path $root "psst${{ matrix.suffix }}"
+          $mcp = Join-Path $root "psst-mcp${{ matrix.suffix }}"
+          $relayBinary = Join-Path $root "psst-relay${{ matrix.suffix }}"
+          $expected = @('INSTALL.md','LICENSE','MANIFEST.json','README.md','SBOM.spdx.json',"psst${{ matrix.suffix }}","psst-mcp${{ matrix.suffix }}","psst-relay${{ matrix.suffix }}") | Sort-Object
+          $actual = @(Get-ChildItem $root -Force)
+          if ($actual | Where-Object { $_.PSIsContainer -or ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) }) { throw 'unexpected directory or link in release archive' }
+          if (Compare-Object $expected @($actual.Name | Sort-Object)) { throw 'release inventory mismatch' }
+          if ((& $psst --version) -ne 'psst ${{ env.PSST_RELEASE_VERSION }}') { throw 'version mismatch' }
+          $manifest = Get-Content (Join-Path $root MANIFEST.json) -Raw | ConvertFrom-Json
+          foreach ($file in $manifest.files) { if ((Get-FileHash -Algorithm SHA256 (Join-Path $root $file.path)).Hash.ToLowerInvariant() -ne $file.sha256) { throw "manifest mismatch: $($file.path)" } }
+          $env:APPDATA = (Resolve-Path profiles); $env:LOCALAPPDATA = $env:APPDATA; $env:HOME = $env:APPDATA
+          $env:XDG_CONFIG_HOME = Join-Path $env:APPDATA config; $env:XDG_DATA_HOME = Join-Path $env:APPDATA data; $env:XDG_RUNTIME_DIR = Join-Path $env:APPDATA runtime
+          New-Item -ItemType Directory $env:XDG_CONFIG_HOME,$env:XDG_DATA_HOME,$env:XDG_RUNTIME_DIR | Out-Null
+          $reservation = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
+          $reservation.Start(); $port = ([Net.IPEndPoint]$reservation.LocalEndpoint).Port; $reservation.Stop()
+          $env:PSST_RELAY = "http://127.0.0.1:$port"
+          $env:PSST_BIND = "127.0.0.1:$port"
+          $env:PSST_DATABASE = Join-Path (Resolve-Path data) 'relay.db'
+          $env:PSST_LOG = 'error'
+          $relay = Start-Process $relayBinary -PassThru -NoNewWindow
+          try {
+            $ready = $false
+            for ($i=0; $i -lt 100; $i++) { & $psst --json health 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $ready = $true; break }; Start-Sleep -Milliseconds 100 }
+            if (-not $ready) { throw 'relay did not become ready before first journey' }
+            & $psst squad create alpha --mission rehearsal | Out-Null
+            & $psst --profile alice squad join alpha --name alice --role sender | Out-Null
+            & $psst --profile bob squad join alpha --name bob --role receiver | Out-Null
+            $roster = & $psst --profile alice --json squad roster | ConvertFrom-Json
+            if (-not $roster.ok -or $roster.data.members.Count -ne 2) { throw 'two-member roster rehearsal failed' }
+            & $psst --profile alice message send --to bob --body replay-canary | Out-Null
+            $first = (& $psst --profile bob --json inbox | ConvertFrom-Json).data.messages[0]
+            if ($first.body -ne 'replay-canary') { throw 'message was not delivered' }
+          } finally { Stop-Process $relay -Force -ErrorAction SilentlyContinue; $relay.WaitForExit() }
+          $relay = Start-Process $relayBinary -PassThru -NoNewWindow
+          try {
+            $ready = $false
+            for ($i=0; $i -lt 100; $i++) { & $psst --json health 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $ready = $true; break }; Start-Sleep -Milliseconds 100 }
+            if (-not $ready) { throw 'relay did not become ready after restart' }
+            $replay = (& $psst --profile bob --json inbox | ConvertFrom-Json).data.messages[0]
+            if ($replay.id -ne $first.id) { throw 'unacknowledged message did not replay after restart' }
+            & $psst --profile bob message acknowledge $replay.id | Out-Null
+            $env:PSST_PROFILE = 'alice'
+            $start = [Diagnostics.ProcessStartInfo]::new(); $start.FileName = $mcp; $start.UseShellExecute = $false
+            $start.RedirectStandardInput = $true; $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
+            $adapter = [Diagnostics.Process]::new(); $adapter.StartInfo = $start
+            if (-not $adapter.Start()) { throw 'MCP adapter did not start' }
+            $initialize = @{jsonrpc='2.0';id=1;method='initialize';params=@{protocolVersion='2025-11-25';capabilities=@{};clientInfo=@{name='release-rehearsal';version='1'}}} | ConvertTo-Json -Compress -Depth 8
+            $adapter.StandardInput.WriteLine($initialize); $adapter.StandardInput.Close()
+            if (-not $adapter.WaitForExit(15000)) { $adapter.Kill(); throw 'MCP initialize timed out' }
+            $response = $adapter.StandardOutput.ReadToEnd().Trim() | ConvertFrom-Json
+            $adapterError = $adapter.StandardError.ReadToEnd()
+            if ($adapter.ExitCode -ne 0 -or $adapterError -or $response.result.serverInfo.name -ne 'psst-mcp') { throw 'MCP initialize failed or streams were impure' }
+          } finally { Stop-Process $relay -Force -ErrorAction SilentlyContinue; $relay.WaitForExit() }
+          Remove-Item install -Recurse -Force
+          if (Test-Path install) { throw 'portable uninstall failed' }
+          if (-not (Test-Path data) -or -not (Test-Path profiles)) { throw 'uninstall removed retained user data' }
+
+  evidence:
+    needs: [contract, clean-download]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: alpha-candidate-*
+          path: assets
+          merge-multiple: true
+      - name: Generate candidate hashes and sanitized traceability bundle
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          archives=sorted(p for p in Path('assets').iterdir() if p.suffix in {'.zip','.gz'})
+          Path('SHA256SUMS').write_text(''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n' for p in archives), encoding='ascii')
+          revision='${{ needs.contract.outputs.revision }}'
+          source=f'${{ github.server_url }}/${{ github.repository }}/blob/{revision}/'
+          evidence={'schema':'psst.release-evidence.v1','version':os.environ['PSST_RELEASE_VERSION'],'tag':os.environ['PSST_RELEASE_TAG'],'revision':revision,'workflow_run':'${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}','platforms':['windows-x86_64','linux-x86_64','macos-aarch64'],'requirements':{'PRD-17-asset-rehearsal':'clean-download local journey passed for candidate assets','PRD-18-portable-assets':'W-502 and SHA256SUMS','PRD-19-alpha-documentation':'docs/install-uninstall.md and self-contained archive docs','W-309-automated-native-gate':'EXTERNAL PREREQUISITE - SEE W-309 EVIDENCE/CI; NOT ESTABLISHED HERE','W-309-live-Claude-Codex':'EXTERNAL PREREQUISITE - NOT ESTABLISHED BY THIS WORKFLOW','W-309-final-three-OS-CI':'EXTERNAL PREREQUISITE - NOT ESTABLISHED BY THIS WORKFLOW','W-503-isolated-trusted-LAN':'OWNER-CONTROLLED EXTERNAL PREREQUISITE - HOSTED CI DOES NOT BIND NON-LOOPBACK'},'migration_compatibility':source+'WORK/W-102-sqlite-foundation-migrations.md','fault_injection_and_reliability':[source+'WORK/W-107-slice-1-reliability-gate.md',source+'WORK/W-207-slice-2-reliability-gate.md',source+'WORK/W-309-slice-3-cooperative-gate.md'],'artifact_hashes':'SHA256SUMS','sbom':'SBOM.spdx.json inside each archive','rehearsal':'native clean-download local jobs in this workflow run','limitations':['trusted LAN only','no TLS','no Slice 4 activation','no installer or package manager'],'approval':'PENDING INDEPENDENT REVIEWER ATTESTATION'}
+          Path('RELEASE-EVIDENCE.json').write_text(json.dumps(evidence,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+          PY
+          ! grep -aEi '(authorization|resume[_ -]?token|session[_ -]?credential)' RELEASE-EVIDENCE.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: alpha-release-evidence-${{ needs.contract.outputs.revision }}
+          path: |
+            assets/*
+            SHA256SUMS
+            RELEASE-EVIDENCE.json
+          if-no-files-found: error
+          retention-days: 30
+
+# This workflow intentionally has no contents:write permission and no tag or GitHub Release step.
+# W-504 publication is a separate, explicitly authorized workflow consuming these exact hashes.
