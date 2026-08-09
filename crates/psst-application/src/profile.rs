@@ -575,7 +575,8 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_lock_endpoints_use_bindable_loopback_below_ephemeral_ports() {
-        for endpoint in lock_endpoints(Path::new("/tmp/psst-profile.lock")).into_iter() {
+        let (stream, datagram) = lock_endpoints(Path::new("/tmp/psst-profile.lock"));
+        for endpoint in [stream, datagram] {
             assert_eq!(*endpoint.ip(), Ipv4Addr::LOCALHOST);
             assert!((10_000..40_000).contains(&endpoint.port()));
         }
