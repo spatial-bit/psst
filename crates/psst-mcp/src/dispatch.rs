@@ -2,8 +2,8 @@ use psst_application::{
     AgentStatusInput, AgentStatusOutput, Availability, ConfigFlags, ConfigInputs, ConfigResolver,
     EmptyInput, LocalErrorCode, McpSafeError, MessageAcknowledgeInput, MessageAcknowledgeOutput,
     MessageReceiveInput, MessageReceiveOutput, MessageSendInput, MessageSendOutput, MessageView,
-    PlatformPaths, Priority, ProfilePaths, RosterMemberView, RuntimeSpec, SecurityNotice,
-    SessionError, SessionHealth, SessionRuntime, SessionView, SquadDescribeInput,
+    PlatformPaths, Priority, ProfileBinding, ProfilePaths, RosterMemberView, RuntimeSpec,
+    SecurityNotice, SessionError, SessionHealth, SessionRuntime, SessionView, SquadDescribeInput,
     SquadDescribeOutput, SquadJoinInput, SquadJoinOutput, SquadLeaveOutput, SquadListOutput,
     SquadRosterOutput, SquadView, TrustLabel, UnboundRuntimeSpec, UntrustedPriority, UntrustedText,
     canonical_tool_text, load_profile, map_client_error, verify_profile_origin,
@@ -37,6 +37,7 @@ struct PublicationProbe {
 
 enum RuntimeSlot {
     Unbound,
+    Dormant(ProfileBinding),
     Transition,
     Bound(Arc<SessionRuntime>),
 }
@@ -76,31 +77,24 @@ impl DispatchState {
             Client::new(&resolved.relay_origin.value, ClientConfig::default())
                 .map_err(|error| map_client_error(&error))?,
         );
-        SessionRuntime::recover_orphaned_leave(
-            paths.clone(),
-            resolved.relay_origin.value.clone(),
-            resolved.profile.value.clone(),
-        )
-        .await
-        .map_err(|error| map_session_error(&error))?;
-        let binding = load_profile(&paths.metadata).map_err(|error| local_io(&error))?;
+        let mut binding = load_profile(&paths.metadata).map_err(|error| local_io(&error))?;
+        if binding.is_none() {
+            SessionRuntime::recover_orphaned_leave(
+                paths.clone(),
+                resolved.relay_origin.value.clone(),
+                resolved.profile.value.clone(),
+            )
+            .await
+            .map_err(|error| map_session_error(&error))?;
+            binding = load_profile(&paths.metadata).map_err(|error| local_io(&error))?;
+        }
         let runtime = if let Some(binding) = binding {
             verify_profile_origin(&binding, &resolved.relay_origin.value)
                 .map_err(|_| LocalErrorCode::ProfileOriginMismatch)?;
-            RuntimeSlot::Bound(Arc::new(
-                SessionRuntime::start(
-                    Arc::clone(&client),
-                    RuntimeSpec {
-                        profile: binding,
-                        paths: paths.clone(),
-                        mode: AgentModeDto::Cooperative,
-                        client_metadata: mcp_metadata(),
-                        shutdown_bound: Duration::from_secs(5),
-                    },
-                )
-                .await
-                .map_err(|error| map_session_error(&error))?,
-            ))
+            // Codex shares MCP configuration across its desktop and CLI tasks. Loading a
+            // configured server must therefore not make every idle task race to own the same
+            // profile. The first protected tool call activates the durable session instead.
+            RuntimeSlot::Dormant(binding)
         } else {
             RuntimeSlot::Unbound
         };
@@ -203,7 +197,7 @@ impl DispatchState {
             let mut slot = self.runtime.write().await;
             match &*slot {
                 RuntimeSlot::Unbound => *slot = RuntimeSlot::Transition,
-                RuntimeSlot::Bound(_) => {
+                RuntimeSlot::Dormant(_) | RuntimeSlot::Bound(_) => {
                     return Err(ToolFailure(LocalErrorCode::ProfileAlreadyBound));
                 }
                 RuntimeSlot::Transition => return Err(ToolFailure(LocalErrorCode::LocalLock)),
@@ -256,10 +250,15 @@ impl DispatchState {
     }
 
     async fn leave(self: &Arc<Self>) -> Result<Value, ToolFailure> {
+        self.active().await?;
         let active = {
             let mut slot = self.runtime.write().await;
             match std::mem::replace(&mut *slot, RuntimeSlot::Transition) {
                 RuntimeSlot::Bound(runtime) => runtime,
+                RuntimeSlot::Dormant(binding) => {
+                    *slot = RuntimeSlot::Dormant(binding);
+                    return Err(ToolFailure(LocalErrorCode::LocalLock));
+                }
                 RuntimeSlot::Unbound => {
                     *slot = RuntimeSlot::Unbound;
                     return Err(ToolFailure(LocalErrorCode::ProfileUnbound));
@@ -361,12 +360,24 @@ impl DispatchState {
     }
 
     async fn status(&self, input: AgentStatusInput) -> Result<Value, ToolFailure> {
-        let runtime = {
+        let dormant = {
+            let slot = self.runtime.read().await;
+            match &*slot {
+                RuntimeSlot::Dormant(_) => true,
+                RuntimeSlot::Bound(_) | RuntimeSlot::Unbound => false,
+                RuntimeSlot::Transition => return Err(ToolFailure(LocalErrorCode::LocalLock)),
+            }
+        };
+        let runtime = if dormant {
+            Some(self.active().await?)
+        } else {
             let slot = self.runtime.read().await;
             match &*slot {
                 RuntimeSlot::Bound(runtime) => Some(Arc::clone(runtime)),
                 RuntimeSlot::Unbound => None,
-                RuntimeSlot::Transition => return Err(ToolFailure(LocalErrorCode::LocalLock)),
+                RuntimeSlot::Dormant(_) | RuntimeSlot::Transition => {
+                    return Err(ToolFailure(LocalErrorCode::LocalLock));
+                }
             }
         };
         let Some(runtime) = runtime else {
@@ -402,7 +413,7 @@ impl DispatchState {
             let mut slot = self.runtime.write().await;
             match std::mem::replace(&mut *slot, RuntimeSlot::Transition) {
                 RuntimeSlot::Bound(runtime) => break Some(runtime),
-                RuntimeSlot::Unbound => break None,
+                RuntimeSlot::Dormant(_) | RuntimeSlot::Unbound => break None,
                 RuntimeSlot::Transition => {
                     drop(slot);
                     tokio::time::timeout(Duration::from_secs(5), settled)
@@ -424,11 +435,44 @@ impl DispatchState {
     }
 
     async fn active(&self) -> Result<Arc<SessionRuntime>, ToolFailure> {
-        let slot = self.runtime.read().await;
-        match &*slot {
-            RuntimeSlot::Bound(runtime) => Ok(Arc::clone(runtime)),
-            RuntimeSlot::Unbound => Err(ToolFailure(LocalErrorCode::ProfileUnbound)),
-            RuntimeSlot::Transition => Err(ToolFailure(LocalErrorCode::LocalLock)),
+        let binding = {
+            let mut slot = self.runtime.write().await;
+            match std::mem::replace(&mut *slot, RuntimeSlot::Transition) {
+                RuntimeSlot::Dormant(binding) => binding,
+                RuntimeSlot::Bound(runtime) => {
+                    *slot = RuntimeSlot::Bound(Arc::clone(&runtime));
+                    return Ok(runtime);
+                }
+                RuntimeSlot::Unbound => {
+                    *slot = RuntimeSlot::Unbound;
+                    return Err(ToolFailure(LocalErrorCode::ProfileUnbound));
+                }
+                RuntimeSlot::Transition => return Err(ToolFailure(LocalErrorCode::LocalLock)),
+            }
+        };
+        let started = SessionRuntime::start(
+            Arc::clone(&self.client),
+            RuntimeSpec {
+                profile: binding.clone(),
+                paths: self.paths.clone(),
+                mode: AgentModeDto::Cooperative,
+                client_metadata: mcp_metadata(),
+                shutdown_bound: Duration::from_secs(5),
+            },
+        )
+        .await;
+        match started {
+            Ok(runtime) => {
+                let runtime = Arc::new(runtime);
+                *self.runtime.write().await = RuntimeSlot::Bound(Arc::clone(&runtime));
+                self.transition_done.notify_waiters();
+                Ok(runtime)
+            }
+            Err(error) => {
+                *self.runtime.write().await = RuntimeSlot::Dormant(binding);
+                self.transition_done.notify_waiters();
+                Err(session_failure(&error))
+            }
         }
     }
 }

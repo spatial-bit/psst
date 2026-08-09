@@ -55,6 +55,10 @@ Last reconciled: 2026-08-08
 
 ## Active
 
+- The operator-directed `ae55f7b` live rehearsal passed bidirectional MCP send/replay/explicit-ack,
+  linked reply, roster/heartbeat, and Claude restart/resume. It found Codex global-registration
+  profile contention; the local repair now defers ownership until protected tool use and passes the
+  complete workspace suite plus strict lint. Fresh artifact verification remains pending.
 - W-309 live cooperative evidence remains pending: one interactive Claude Code session and one
   interactive Codex session must use distinct profiles at the exact candidate revision and retain a
   sanitized, independently approved walkthrough.

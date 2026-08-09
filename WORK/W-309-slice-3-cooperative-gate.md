@@ -43,3 +43,19 @@ Independently validate the complete cooperative CLI/MCP slice through automated 
   Windows, Ubuntu, and macOS CI passed in
   [workflow 31274551562](https://github.com/spatial-bit/psst/actions/runs/31274551562).
 - Interactive Claude Code and Codex walkthroughs are deliberately not claimed and remain pending.
+
+## Operator-directed live rehearsal at `ae55f7b`
+
+- A real loopback relay plus interactive Claude Code and Codex CLI sessions joined as distinct
+  profiles, reported online heartbeat presence, exchanged messages in both directions, replayed
+  each message unchanged before acknowledgement, acknowledged explicitly, preserved the reply and
+  correlation links, and drained both inboxes to zero. Claude then restarted and resumed its bound
+  profile without another join.
+- The rehearsal exposed a Codex-specific lifecycle defect: Codex shares global MCP registrations
+  across desktop and CLI tasks, so several idle tasks eagerly started the same bound profile and
+  caused handshake failures. The repair defers profile ownership until the first protected tool
+  call. A real two-process regression proves concurrent MCP initialization, a typed
+  `profile_locked` result only on contended use, and successful handoff after the first owner exits.
+- Local repair gates passed: complete workspace tests, strict workspace/all-target/all-feature
+  Clippy with warnings denied, formatting, and diff checks. A fresh packaged artifact and short
+  post-repair operator check remain pending.

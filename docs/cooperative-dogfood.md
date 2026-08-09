@@ -125,6 +125,12 @@ the desktop app share MCP configuration on the same host. In a Codex session, us
 the server. See the [official Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)
 for the current UI and configuration-file alternatives.
 
+Because that registration is shared, several open Codex tasks may initialize the same Psst MCP
+server command. Initialization is passive: the first task that actually calls a protected Psst
+tool acquires the configured profile, while other idle tasks remain initialized. A second task that
+tries to use that profile concurrently receives `profile_locked`; close or stop using the owning
+task before continuing from another one.
+
 Psst does not create Codex tasks, invoke Codex App Server, schedule turns, or wake an idle task.
 The agent must choose when to call `message_receive` and how to act on untrusted message content.
 
@@ -136,8 +142,9 @@ The agent must choose when to call `message_receive` and how to act on untrusted
 - `profile_origin_mismatch`: use the origin stored by `profile show`, or choose a new profile.
 - `outcome_unknown`: do not blindly resend from a new CLI invocation. Inspect the transcript and
   coordinate with the recipient; only a still-owning runtime can retry the same prepared identity.
-- MCP fails at startup: run `psst --relay ... --profile ... status`, use an absolute binary path,
-  and ensure no other process owns the profile.
+- MCP fails at startup: verify the configured origin/profile and absolute binary path. Ordinary
+  bound-profile contention does not prevent initialization; a protected tool call reports
+  `profile_locked` when another process owns the profile.
 - Messages repeat: that is expected until explicit acknowledgement succeeds.
 
 ## Explicitly deferred
