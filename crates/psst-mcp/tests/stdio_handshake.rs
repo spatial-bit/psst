@@ -32,7 +32,7 @@ fn pinned_sdk_completes_initialize_ping_and_clean_stdio_shutdown() {
     )
     .unwrap();
     stdin.flush().unwrap();
-    let initialized = stdout.read(&mut child);
+    let initialized = stdout.read(&mut child, "initialize");
     assert_eq!(initialized["jsonrpc"], "2.0");
     assert_eq!(initialized["id"], 1);
     assert_eq!(initialized["result"]["serverInfo"]["name"], "psst-mcp");
@@ -57,7 +57,7 @@ fn pinned_sdk_completes_initialize_ping_and_clean_stdio_shutdown() {
     )
     .unwrap();
     stdin.flush().unwrap();
-    let pong = stdout.read(&mut child);
+    let pong = stdout.read(&mut child, "ping");
     assert_eq!(
         pong,
         serde_json::json!({"jsonrpc":"2.0","id":2,"result":{}})
@@ -70,7 +70,7 @@ fn pinned_sdk_completes_initialize_ping_and_clean_stdio_shutdown() {
     )
     .unwrap();
     stdin.flush().unwrap();
-    let listed = stdout.read(&mut child);
+    let listed = stdout.read(&mut child, "tools/list");
     assert_eq!(listed["id"], 3);
     let expected = serde_json::to_value(psst_mcp::wire_tools()).unwrap();
     assert_eq!(listed["result"]["tools"], expected);
@@ -82,7 +82,7 @@ fn pinned_sdk_completes_initialize_ping_and_clean_stdio_shutdown() {
     )
     .unwrap();
     stdin.flush().unwrap();
-    let unavailable = stdout.read(&mut child);
+    let unavailable = stdout.read(&mut child, "squad_list");
     assert_eq!(unavailable["id"], 4);
     assert_eq!(unavailable["result"]["isError"], true);
     assert_eq!(
@@ -105,7 +105,7 @@ fn pinned_sdk_completes_initialize_ping_and_clean_stdio_shutdown() {
     )
     .unwrap();
     stdin.flush().unwrap();
-    let unknown = stdout.read(&mut child);
+    let unknown = stdout.read(&mut child, "unknown tool");
     assert_eq!(unknown["id"], 5);
     assert_eq!(unknown["error"]["code"], -32602);
 
@@ -116,7 +116,7 @@ fn pinned_sdk_completes_initialize_ping_and_clean_stdio_shutdown() {
     )
     .unwrap();
     stdin.flush().unwrap();
-    let invalid = stdout.read(&mut child);
+    let invalid = stdout.read(&mut child, "invalid squad_join");
     assert_eq!(invalid["id"], 6);
     assert_eq!(invalid["error"]["code"], -32602);
 
@@ -133,7 +133,7 @@ fn pinned_sdk_completes_initialize_ping_and_clean_stdio_shutdown() {
     )
     .unwrap();
     stdin.flush().unwrap();
-    let after_cancel = stdout.read(&mut child);
+    let after_cancel = stdout.read(&mut child, "post-cancellation ping");
     assert_eq!(
         after_cancel,
         serde_json::json!({"jsonrpc":"2.0","id":7,"result":{}})
@@ -206,7 +206,7 @@ fn unknown_method_is_a_json_rpc_protocol_failure() {
     )
     .unwrap();
     stdin.flush().unwrap();
-    let initialized = stdout.read(&mut child);
+    let initialized = stdout.read(&mut child, "initialize");
     assert_eq!(initialized["id"], 1);
     writeln!(
         stdin,
@@ -221,7 +221,7 @@ fn unknown_method_is_a_json_rpc_protocol_failure() {
     )
     .unwrap();
     stdin.flush().unwrap();
-    let failure = stdout.read(&mut child);
+    let failure = stdout.read(&mut child, "unknown method");
     assert_eq!(failure["jsonrpc"], "2.0");
     assert_eq!(failure["id"], 4);
     assert!(failure.get("error").is_some());
@@ -337,16 +337,20 @@ impl ProtocolReader {
         }
     }
 
-    fn read(&mut self, child: &mut std::process::Child) -> Value {
+    fn read(&mut self, child: &mut std::process::Child, step: &str) -> Value {
         let line = match self.receiver.recv_timeout(Duration::from_secs(15)) {
             Ok(line) => line,
             Err(error) => {
                 child.kill().ok();
                 child.wait().ok();
+                let mut stderr = String::new();
+                if let Some(mut pipe) = child.stderr.take() {
+                    pipe.read_to_string(&mut stderr).ok();
+                }
                 if let Some(reader) = self.thread.take() {
                     let _ = reader.join();
                 }
-                panic!("timed protocol response: {error}");
+                panic!("timed protocol response during {step}: {error}; stderr={stderr:?}");
             }
         };
         serde_json::from_str(&line).unwrap()

@@ -160,15 +160,32 @@ impl ProfileLock {
 }
 fn lock_endpoints(path: &Path) -> (SocketAddrV4, SocketAddrV4) {
     let digest = Sha256::digest(path.as_os_str().to_string_lossy().as_bytes());
-    // Windows does not consistently permit binding every address in 127/8.
-    // Keep this OS-owned lock namespace on canonical loopback and below the
-    // dynamic/private port range used by the supported platforms.
-    let stream_port = 10_000 + (u16::from_be_bytes([digest[0], digest[1]]) % 30_000);
-    let datagram_port = 10_000 + (u16::from_be_bytes([digest[2], digest[3]]) % 30_000);
-    (
-        SocketAddrV4::new(Ipv4Addr::LOCALHOST, stream_port),
-        SocketAddrV4::new(Ipv4Addr::LOCALHOST, datagram_port),
-    )
+    #[cfg(windows)]
+    {
+        // Windows does not consistently permit binding every address in 127/8.
+        // Keep this OS-owned lock namespace on canonical loopback and below the
+        // dynamic/private port range used by Windows.
+        let stream_port = 10_000 + (u16::from_be_bytes([digest[0], digest[1]]) % 30_000);
+        let datagram_port = 10_000 + (u16::from_be_bytes([digest[2], digest[3]]) % 30_000);
+        (
+            SocketAddrV4::new(Ipv4Addr::LOCALHOST, stream_port),
+            SocketAddrV4::new(Ipv4Addr::LOCALHOST, datagram_port),
+        )
+    }
+    #[cfg(unix)]
+    {
+        // Linux starts its default ephemeral range at 32768. Keep ports below
+        // that boundary and use the standardized 127/8 loopback network to
+        // avoid mapping unrelated profile identities into only 30,000 slots.
+        let stream_address = Ipv4Addr::new(127, digest[0], digest[1], digest[2]);
+        let datagram_address = Ipv4Addr::new(127, digest[3], digest[4], digest[5]);
+        let stream_port = 10_000 + (u16::from_be_bytes([digest[6], digest[7]]) % 20_000);
+        let datagram_port = 10_000 + (u16::from_be_bytes([digest[8], digest[9]]) % 20_000);
+        (
+            SocketAddrV4::new(stream_address, stream_port),
+            SocketAddrV4::new(datagram_address, datagram_port),
+        )
+    }
 }
 impl Drop for ProfileLock {
     fn drop(&mut self) {
@@ -531,6 +548,17 @@ mod tests {
         assert!(ProfileLock::acquire(&p).is_err());
         drop(datagram);
         assert!(ProfileLock::acquire(&p).is_ok());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn unix_lock_endpoints_use_full_loopback_identity_below_ephemeral_ports() {
+        let first = lock_endpoints(Path::new("/tmp/psst-profile-a.lock"));
+        let second = lock_endpoints(Path::new("/tmp/psst-profile-b.lock"));
+        assert_ne!(first, second);
+        for endpoint in [first.0, first.1, second.0, second.1] {
+            assert_eq!(endpoint.ip().octets()[0], 127);
+            assert!((10_000..30_000).contains(&endpoint.port()));
+        }
     }
     #[cfg(unix)]
     #[test]
