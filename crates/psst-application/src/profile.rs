@@ -172,7 +172,7 @@ fn lock_endpoints(path: &Path) -> (SocketAddrV4, SocketAddrV4) {
             SocketAddrV4::new(Ipv4Addr::LOCALHOST, datagram_port),
         )
     }
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         // Linux starts its default ephemeral range at 32768. Keep ports below
         // that boundary and use the standardized 127/8 loopback network to
@@ -184,6 +184,18 @@ fn lock_endpoints(path: &Path) -> (SocketAddrV4, SocketAddrV4) {
         (
             SocketAddrV4::new(stream_address, stream_port),
             SocketAddrV4::new(datagram_address, datagram_port),
+        )
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // macOS only permits binding canonical 127.0.0.1 on supported runners.
+        // Its ephemeral range starts at 49152, so this fixed-address namespace
+        // remains below unrelated outbound socket allocation.
+        let stream_port = 10_000 + (u16::from_be_bytes([digest[0], digest[1]]) % 30_000);
+        let datagram_port = 10_000 + (u16::from_be_bytes([digest[2], digest[3]]) % 30_000);
+        (
+            SocketAddrV4::new(Ipv4Addr::LOCALHOST, stream_port),
+            SocketAddrV4::new(Ipv4Addr::LOCALHOST, datagram_port),
         )
     }
 }
@@ -549,7 +561,7 @@ mod tests {
         drop(datagram);
         assert!(ProfileLock::acquire(&p).is_ok());
     }
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn unix_lock_endpoints_use_full_loopback_identity_below_ephemeral_ports() {
         let first = lock_endpoints(Path::new("/tmp/psst-profile-a.lock"));
@@ -558,6 +570,14 @@ mod tests {
         for endpoint in [first.0, first.1, second.0, second.1] {
             assert_eq!(endpoint.ip().octets()[0], 127);
             assert!((10_000..30_000).contains(&endpoint.port()));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_lock_endpoints_use_bindable_loopback_below_ephemeral_ports() {
+        for endpoint in lock_endpoints(Path::new("/tmp/psst-profile.lock")).into_iter() {
+            assert_eq!(*endpoint.ip(), Ipv4Addr::LOCALHOST);
+            assert!((10_000..40_000).contains(&endpoint.port()));
         }
     }
     #[cfg(unix)]
