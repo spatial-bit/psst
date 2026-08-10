@@ -49,7 +49,7 @@ Gate: a real relay and typed client pass restart, offline delivery, replay, conc
 
 ## Slice 3 — CLI and cooperative MCP
 
-Status: active
+Status: verified
 
 Human CLI, safe token storage, MCP tools, and cooperative Claude/Codex workflows.
 
@@ -73,7 +73,22 @@ Gate: two independently launched interactive Claude Code and Codex agents exchan
 
 ## Slice 4 — Harnessed activation
 
+Status: active
+
 Claude MCP Channels, Codex App Server, wake coalescing, reconciliation, and bounded backoff.
+
+Execution order:
+
+```text
+W-401 Activation contracts
+  -> W-402 Client-neutral activation engine
+      ├─> W-403 Claude Channel adapter
+      └─> W-404 Codex App Server adapter
+W-403 + W-404 -> W-405 Harness operations
+W-401 through W-405 -> W-406 Slice 4 wake-on-mail gate
+```
+
+Gate: fake-host contract suites and native packaged rehearsals prove burst coalescing, dropped-wake reconciliation, bounded backoff, no active-turn preemption, and no secret or message-body injection; opt-in live Claude and Codex sessions each wake from durable pending mail and process it without duplicate or lost work.
 
 ## Slice 5 — Release engineering
 

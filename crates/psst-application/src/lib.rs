@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod activation;
 mod cli;
 mod config;
 mod error;
@@ -10,6 +11,7 @@ mod mcp;
 mod profile;
 mod session;
 
+pub use activation::*;
 pub use cli::*;
 pub use config::*;
 pub use error::*;

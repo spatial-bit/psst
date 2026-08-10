@@ -1,7 +1,7 @@
 # Progress
 
-Current slice: 3 — CLI and cooperative MCP
-Current gate: Slice 3 automated gate verified; live cooperative walkthrough pending
+Current slice: 4 — harnessed activation
+Current gate: W-401 activation contracts active
 Last reconciled: 2026-08-09
 
 ## Verified
@@ -55,6 +55,11 @@ Last reconciled: 2026-08-09
 
 ## Active
 
+- W-401 defines the client-neutral activation boundary and dependency-ordered Slice 4 plan. The
+  shared engine owns coalescing, reconciliation, turn occupancy, retry/backoff, and shutdown; Claude
+  Channels and Codex App Server remain thin host adapters. External contracts were checked against
+  the current primary Codex App Server and Claude Code Channels documentation.
+
 - The operator-directed `ae55f7b` live rehearsal passed bidirectional MCP send/replay/explicit-ack,
   linked reply, roster/heartbeat, and Claude restart/resume. It found Codex global-registration
   profile contention; the repair defers ownership until protected tool use.
@@ -95,6 +100,5 @@ Last reconciled: 2026-08-09
 
 ## Next coordinator action
 
-Hand off the merged-main development archives for practical alpha use. The loopback ambiguous-commit
-CLI proxy remains behind explicit user authorization. Formal signed-tag publication remains a
-separate owner-authorized path; Slice 4 client activation and wake-on-mail are not part of this gate.
+Verify W-401 contracts, then implement W-402's deterministic activation engine and fake host before
+adding either client protocol. Keep the merged alpha usable and main green throughout Slice 4.
