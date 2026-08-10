@@ -1,6 +1,6 @@
 # W-403: Claude Code Channel adapter
 
-Status: implementation candidate; native CI and opt-in live Claude smoke pending
+Status: implementation candidate; opt-in live Claude smoke passed, exact evidence-head native CI pending
 
 ## Objective
 
@@ -57,5 +57,15 @@ Do not launch `claude -p`, relay permissions, send participant message bodies, o
   relay, `claude -p`, client launch, network listeners, and implicit acknowledgement.
 - Local focused gates: all `psst-mcp` targets pass (13 unit tests, 2 real-relay process tests, and 4
   stdio protocol tests); strict package Clippy with all targets/features and `-D warnings` passes;
-  formatting passes. Full workspace gates, Windows/Ubuntu/macOS CI, applicable dogfood checks, and
-  an opt-in real Claude Code Channel session remain required on the exact PR head before merge.
+  formatting passes.
+- Opt-in live Claude Code 2.1.226 smoke on Windows passed against the real relay and the preserved
+  pending message `msg_803cfff266a42d053fca16654b70c4ed`. Claude registered the Channel handler
+  at `2026-08-10T16:38:07.987Z`; Psst emitted the first wake at `16:38:08.802Z`, after the fixed
+  registration fence. Without an operator prompt, Claude called `message_receive` at
+  `16:38:13.985Z` and `message_acknowledge` at `16:38:16.244Z`; the relay durably committed the
+  acknowledgement at `16:38:16.264Z`. Relay evidence shows reconciliation stayed at approximately
+  one request per second while pending, then returned to ordinary long polling after acknowledgement.
+  The Channel emitted no duplicate wake, and the adapter consumed 0.14 CPU seconds during the
+  observed live run. Participant content and credentials are excluded from this evidence record.
+- Full workspace gates and Windows/Ubuntu/macOS CI plus applicable dogfood checks passed on
+  `e3ac576`; the same gates must rerun on the evidence-only head before merge.
