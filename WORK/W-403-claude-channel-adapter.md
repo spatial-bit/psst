@@ -40,8 +40,10 @@ Do not launch `claude -p`, relay permissions, send participant message bodies, o
   notification, and fixed diagnostic bytes.
 - Notification transport failure blocks instead of retrying an ambiguously issued model turn. A
   successfully written notification remains occupied until the notified oldest pending message is
-  acknowledged or the authoritative oldest ID changes. Silent preview/policy drops therefore
-  become a bounded visible blocked diagnostic rather than a notification flood.
+  acknowledged or the authoritative oldest ID changes. Completion reconciliation is paced to at
+  most one request per second; the paused-clock regression proves unchanged pending mail cannot
+  spin. Silent preview/policy drops therefore become a bounded visible blocked diagnostic rather
+  than a notification or polling flood.
 - The in-memory fake-Claude transcript proves the exact SDK notification method and parameters.
   A real relay/two-process test proves pending mail emits one body-free wake, retrieval replays
   without acknowledgement, explicit acknowledgement clears it, roster mode is `harnessed`, clean

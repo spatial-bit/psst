@@ -20,7 +20,8 @@ completed messages with `message_acknowledge`.
 - A successful notification write does not prove Claude processed the wake. Psst keeps the turn
   occupied until relay truth shows that the notified oldest message was acknowledged. A silent
   drop, disconnect, or unconsumed wake eventually blocks activation instead of issuing a duplicate
-  model turn.
+  model turn. While that turn is occupied, acknowledgement reconciliation is paced to at most one
+  request per second so pending mail cannot create a CPU or network spin loop.
 - Psst does not relay Claude permission prompts, start Claude, use `claude -p`, inject keystrokes,
   add a network listener, or change Claude configuration.
 
@@ -41,7 +42,12 @@ Custom Channels currently require Claude Code's development-channel preview flag
 not Psst, supplies that flag when starting the interactive Claude session and explicitly names the
 registered MCP server. Confirm the exact syntax supported by the installed Claude version against
 the current [Claude Code Channels reference](https://code.claude.com/docs/en/channels-reference).
-Psst deliberately does not set or infer the preview flag.
+Psst deliberately does not set or infer the preview flag. Before sending test mail, confirm the
+Claude startup banner says that messages from the exact `server:<configured-name>` entry inject
+directly into the session. Tool availability alone proves only an MCP connection, not Channel
+registration. For a disposable local rehearsal, an operator may separately choose Claude's
+permission-skipping flag so a tool approval dialog cannot stall the wake; never use that flag for
+an untrusted project or Channel source.
 
 Organization policy can disable Channels, and Claude can silently drop Channel events when the MCP
 server was not loaded as a Channel. Psst cannot distinguish those cases from an unprocessed wake at
