@@ -574,7 +574,24 @@ mod tests {
         let datagram = UdpSocket::bind(udp).unwrap();
         assert!(ProfileLock::acquire(&p).is_err());
         drop(datagram);
-        assert!(ProfileLock::acquire(&p).is_ok());
+        // The deliberately bounded macOS/Windows kernel namespace can also be
+        // occupied conservatively by another profile-lock test running in this
+        // process. Once our injected occupant is gone, require eventual bounded
+        // acquisition rather than assuming the shared namespace is immediately
+        // idle at this exact scheduler tick.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            match ProfileLock::acquire(&p) {
+                Ok(guard) => {
+                    drop(guard);
+                    break;
+                }
+                Err(_) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("profile lock remained unavailable: {error}"),
+            }
+        }
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
