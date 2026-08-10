@@ -146,6 +146,11 @@ impl Store {
     fn open_with_migrations(path: &Path, migrations: &[Migration]) -> Result<Self, StoreError> {
         validate_migration_plan(migrations)?;
         let mut connection = Connection::open(path)?;
+        // Install the connection-local busy handler before the first database
+        // read. A competing opener can already hold the fresh database's
+        // pre-WAL migration lock, and application-id verification must join the
+        // same bounded serialization policy rather than fail immediately.
+        connection.busy_timeout(BUSY_TIMEOUT)?;
         verify_application_id(&connection)?;
         configure_connection(&connection)?;
         migrate(&mut connection, migrations)?;
@@ -201,7 +206,6 @@ impl Store {
 }
 
 fn configure_connection(connection: &Connection) -> Result<(), StoreError> {
-    connection.busy_timeout(BUSY_TIMEOUT)?;
     connection.pragma_update(None, "foreign_keys", true)?;
     enable_wal_with_bounded_retry(connection)?;
     // FULL is intentional: accepted writes must survive an OS crash, not merely a process crash.

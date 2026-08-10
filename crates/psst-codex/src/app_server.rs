@@ -309,54 +309,7 @@ impl AppServerClient {
         let stdout = child.stdout.take().ok_or(AppServerError::Launch)?;
         let stdin = child.stdin.take().ok_or(AppServerError::Launch)?;
         let mut protocol = JsonLines::new(BufReader::new(stdout), stdin);
-        protocol
-            .request(
-                1,
-                "initialize",
-                json!({"clientInfo": {
-                    "name": "psst-codex",
-                    "title": "Psst wake-on-mail",
-                    "version": env!("CARGO_PKG_VERSION")
-                }, "capabilities": {"experimentalApi": true}}),
-            )
-            .await?;
-        protocol.notification("initialized", json!({})).await?;
-        let expected_thread = match &config.thread {
-            ThreadPolicy::Resume(thread_id) => Some(thread_id.clone()),
-            ThreadPolicy::Create { .. } => None,
-        };
-        let (method, params) = match &config.thread {
-            ThreadPolicy::Resume(thread_id) => (
-                "thread/resume",
-                json!({"threadId": thread_id, "dynamicTools": dynamic_tools()}),
-            ),
-            ThreadPolicy::Create { .. } => (
-                "thread/start",
-                json!({
-                    "cwd": &config.cwd,
-                    "approvalPolicy": "never",
-                    "sandbox": "workspace-write",
-                    "serviceName": "psst-codex",
-                    "dynamicTools": dynamic_tools()
-                }),
-            ),
-        };
-        let response = protocol.request(2, method, params).await?;
-        let thread_id = response
-            .pointer("/thread/id")
-            .and_then(Value::as_str)
-            .filter(|value| valid_identifier(value, 128))
-            .ok_or(AppServerError::Protocol)?
-            .to_owned();
-        if expected_thread
-            .as_deref()
-            .is_some_and(|expected| expected != thread_id)
-        {
-            return Err(AppServerError::Protocol);
-        }
-        if let ThreadPolicy::Create { record } = &config.thread {
-            persist_thread_id(record, &thread_id)?;
-        }
+        let thread_id = initialize_thread(&mut protocol, config).await?;
         Ok(Self {
             child,
             protocol,
@@ -498,6 +451,65 @@ impl AppServerClient {
             .map_err(|_| AppServerError::Exited)?;
         Ok(())
     }
+}
+
+async fn initialize_thread<R, W>(
+    protocol: &mut JsonLines<R, W>,
+    config: &AppServerConfig,
+) -> Result<String, AppServerError>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    protocol
+        .request(
+            1,
+            "initialize",
+            json!({"clientInfo": {
+                "name": "psst-codex",
+                "title": "Psst wake-on-mail",
+                "version": env!("CARGO_PKG_VERSION")
+            }, "capabilities": {"experimentalApi": true}}),
+        )
+        .await?;
+    protocol.notification("initialized", json!({})).await?;
+    let expected_thread = match &config.thread {
+        ThreadPolicy::Resume(thread_id) => Some(thread_id.clone()),
+        ThreadPolicy::Create { .. } => None,
+    };
+    let (method, params) = match &config.thread {
+        ThreadPolicy::Resume(thread_id) => (
+            "thread/resume",
+            json!({"threadId": thread_id, "dynamicTools": dynamic_tools()}),
+        ),
+        ThreadPolicy::Create { .. } => (
+            "thread/start",
+            json!({
+                "cwd": &config.cwd,
+                "approvalPolicy": "never",
+                "sandbox": "workspace-write",
+                "serviceName": "psst-codex",
+                "dynamicTools": dynamic_tools()
+            }),
+        ),
+    };
+    let response = protocol.request(2, method, params).await?;
+    let thread_id = response
+        .pointer("/thread/id")
+        .and_then(Value::as_str)
+        .filter(|value| valid_identifier(value, 128))
+        .ok_or(AppServerError::Protocol)?
+        .to_owned();
+    if expected_thread
+        .as_deref()
+        .is_some_and(|expected| expected != thread_id)
+    {
+        return Err(AppServerError::Protocol);
+    }
+    if let ThreadPolicy::Create { record } = &config.thread {
+        persist_thread_id(record, &thread_id)?;
+    }
+    Ok(thread_id)
 }
 
 struct DynamicWakeCall {
@@ -1097,6 +1109,73 @@ mod tests {
         assert!(!transcript.contains("turn/steer"));
         assert!(!transcript.contains("turn/interrupt"));
         assert!(!transcript.contains("message body"));
+    }
+
+    #[tokio::test]
+    async fn durable_thread_record_resumes_the_exact_identity_after_protocol_restart() {
+        async fn handshake(config: &AppServerConfig) -> (String, String) {
+            let (client_read, mut server_write) = duplex(16_384);
+            let (mut server_read, client_write) = duplex(16_384);
+            let server = tokio::spawn(async move {
+                let mut observed = Vec::new();
+                let mut reader = BufReader::new(&mut server_read);
+                for response in [
+                    Some(json!({"id": 1, "result": {"userAgent": "fake-codex"}})),
+                    None,
+                    Some(json!({"id": 2, "result": {"thread": {"id": "thr_durable"}}})),
+                ] {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).await.unwrap();
+                    observed.push(line);
+                    if let Some(response) = response {
+                        let mut bytes = serde_json::to_vec(&response).unwrap();
+                        bytes.push(b'\n');
+                        server_write.write_all(&bytes).await.unwrap();
+                    }
+                }
+                observed.concat()
+            });
+            let mut protocol = JsonLines::new(BufReader::new(client_read), client_write);
+            let thread_id = initialize_thread(&mut protocol, config).await.unwrap();
+            drop(protocol);
+            (thread_id, server.await.unwrap())
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let record = directory.path().join("thread-id");
+        let base = AppServerConfig {
+            command: directory.path().join("unused-codex"),
+            mcp_command: directory.path().join("unused-mcp"),
+            mcp_environment: BTreeMap::new(),
+            thread: ThreadPolicy::Create {
+                record: record.clone(),
+            },
+            cwd: directory.path().to_owned(),
+        };
+        let (created, first) = handshake(&base).await;
+        assert_eq!(created, "thr_durable");
+        assert_eq!(std::fs::read_to_string(&record).unwrap(), "thr_durable\n");
+        assert_eq!(first.matches("\"method\":\"initialize\"").count(), 1);
+        assert_eq!(first.matches("\"method\":\"thread/start\"").count(), 1);
+        assert_eq!(first.matches("\"method\":\"thread/resume\"").count(), 0);
+
+        let resumed_config = AppServerConfig {
+            thread: ThreadPolicy::Resume(
+                std::fs::read_to_string(&record).unwrap().trim().to_owned(),
+            ),
+            ..base
+        };
+        let (resumed, second) = handshake(&resumed_config).await;
+        assert_eq!(resumed, created);
+        assert_eq!(second.matches("\"method\":\"initialize\"").count(), 1);
+        assert_eq!(second.matches("\"method\":\"thread/start\"").count(), 0);
+        assert_eq!(second.matches("\"method\":\"thread/resume\"").count(), 1);
+        assert!(second.contains("\"threadId\":\"thr_durable\""));
+        let aggregate = first + &second;
+        assert_eq!(aggregate.matches("\"method\":\"initialize\"").count(), 2);
+        assert!(!aggregate.contains("turn/steer"));
+        assert!(!aggregate.contains("turn/interrupt"));
+        assert!(!aggregate.contains("message body"));
     }
 
     #[tokio::test]
