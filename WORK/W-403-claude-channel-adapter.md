@@ -1,6 +1,6 @@
 # W-403: Claude Code Channel adapter
 
-Status: implementation candidate; opt-in live Claude smoke passed, exact evidence-head native CI pending
+Status: implementation candidate; opt-in live Claude smoke passed, repaired-head native CI pending
 
 ## Objective
 
@@ -68,4 +68,9 @@ Do not launch `claude -p`, relay permissions, send participant message bodies, o
   The Channel emitted no duplicate wake, and the adapter consumed 0.14 CPU seconds during the
   observed live run. Participant content and credentials are excluded from this evidence record.
 - Full workspace gates and Windows/Ubuntu/macOS CI plus applicable dogfood checks passed on
-  `e3ac576`; the same gates must rerun on the evidence-only head before merge.
+  `e3ac576`. The next evidence-only macOS run exposed a preexisting SQLite startup-contention
+  failure before the send fault was injected. Store opening now uses an eight-second bounded
+  application-ID/WAL/migration serialization window and restores the ordinary two-second policy
+  before publication. The concurrent-opener regression, the exact dropped-send test five times,
+  formatting, strict workspace Clippy, and the full workspace suite pass locally on `c36244b`; the
+  repaired exact head must pass native CI before merge.
