@@ -46,8 +46,11 @@ Do not use remote unauthenticated WebSockets, `turn/steer`, `turn/interrupt`, or
   `msg_f4895618479c4bb7fb931b98d9040716`, called the two dynamic tools, acknowledged only after
   retrieval, and left `pending_count: 0`. A second message
   `msg_a864f06018690ada47c9632d4826ff66` repeated the result after the retrieve-before-ack fence was
-  added. Both wake prompts were body-free and used no shell or filesystem fallback.
+  added. After stopping both harness and relay, the same relay database and exact durable thread
+  `019fea29-7c22-7c90-b02f-fa9ba6d973ba` were restarted; message
+  `msg_e42f286f017f644c3d2cce381dd8ff5b` was processed and acknowledged on that thread, again leaving
+  `pending_count: 0`. All wake prompts were body-free and used no shell or filesystem fallback.
 - Strict workspace Clippy, formatting, patch integrity, Slice 4 contract tests, and the complete
   locked workspace test suite pass locally.
-- Native Windows/Ubuntu/macOS CI and an automated durable-resume smoke remain required before this
-  work unit is verified.
+- Native Windows/Ubuntu/macOS CI is green at `c699018`; an automated durable-resume smoke remains
+  required before this work unit is verified.
