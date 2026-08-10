@@ -73,7 +73,7 @@ Gate: two independently launched interactive Claude Code and Codex agents exchan
 
 ## Slice 4 — Harnessed activation
 
-Status: active
+Status: verified
 
 Claude MCP Channels, Codex App Server, wake coalescing, reconciliation, and bounded backoff.
 

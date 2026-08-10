@@ -1,7 +1,7 @@
 # Progress
 
-Current slice: 4 — harnessed activation
-Current gate: W-406 packaged wake-on-mail verification
+Current slice: 4 — harnessed activation (verified)
+Current gate: Slice 4 complete; Slice 5 not started
 Last reconciled: 2026-08-10
 
 ## Verified
@@ -94,14 +94,15 @@ Last reconciled: 2026-08-10
   Ubuntu, and macOS plus all applicable native dogfood builds. Live Windows evidence proves both
   the Claude Channel wake path (including the registration fence and explicit acknowledgement)
   and Codex App Server wake/retrieve/acknowledge with durable thread resumption.
-- W-406 is verified at exact implementation head
-  `676c1c81e4a975eae340bf61b97922ed023b09fb`. Standard three-OS CI passed in
-  [workflow 31415718078](https://github.com/spatial-bit/psst/actions/runs/31415718078), native
-  packaged Claude/Codex wake gates passed in
-  [workflow 31415717960](https://github.com/spatial-bit/psst/actions/runs/31415717960), and the
-  separately dispatched native plus checkoutless/no-Rust three-platform rehearsal passed in
-  [workflow 31416143545](https://github.com/spatial-bit/psst/actions/runs/31416143545). The final
-  documentation-only evidence head still requires its normal PR checks before merge.
+- W-406 final head `fb74979be4d3a94398a3abb4d3e9a9492d3ff6a7` merged through PR
+  [#10](https://github.com/spatial-bit/psst/pull/10) as
+  `3acb321d77c587db17bcfe365cefc9438bb771f1`. The exact merged revision passed standard CI on
+  Windows, Ubuntu, and macOS in
+  [workflow 31420182253](https://github.com/spatial-bit/psst/actions/runs/31420182253), and all three
+  native packaged plus checkoutless/no-Rust Claude and Codex wake rehearsals passed in
+  [workflow 31420181271](https://github.com/spatial-bit/psst/actions/runs/31420181271). Slice 4's
+  durable activation, coalescing, reconciliation/backoff, Claude Channel, Codex App Server,
+  lifecycle/credential, documentation, and live idle-wake requirements are complete.
 
 ## Gate evidence
 
@@ -112,6 +113,6 @@ Last reconciled: 2026-08-10
 
 ## Next coordinator action
 
-Run PR #10's final documentation-only evidence head through required checks, confirm its exact scope
-and mergeability, then request fresh authorization to mark ready and merge. After merge, verify the
-exact main revision and reconcile any final merged-main evidence before closing the Slice 4 goal.
+Close the Slice 4 goal after this evidence-only reconciliation merges, then define the Slice 5
+release-engineering goal and its bounded standing merge authorization. Tagging, prerelease
+publication, signer configuration, and public exposure remain separate explicit-authority actions.
