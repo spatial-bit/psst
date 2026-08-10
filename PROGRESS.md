@@ -1,8 +1,8 @@
 # Progress
 
 Current slice: 4 — harnessed activation
-Current gate: W-401 activation contracts active
-Last reconciled: 2026-08-09
+Current gate: W-406 packaged wake-on-mail verification
+Last reconciled: 2026-08-10
 
 ## Verified
 
@@ -90,6 +90,10 @@ Last reconciled: 2026-08-09
 - W-309's automated reliability gate, operator-directed Claude/Codex rehearsal, post-repair Codex
   lifecycle smoke, and exact-merge native/clean-download verification are complete. Psst remains a
   cooperative tool: this evidence does not claim client launch, scheduling, or wake-on-mail.
+- W-401 through W-405 are merged and verified. Their exact heads passed standard CI on Windows,
+  Ubuntu, and macOS plus all applicable native dogfood builds. Live Windows evidence proves both
+  the Claude Channel wake path (including the registration fence and explicit acknowledgement)
+  and Codex App Server wake/retrieve/acknowledge with durable thread resumption.
 
 ## Gate evidence
 
@@ -100,5 +104,6 @@ Last reconciled: 2026-08-09
 
 ## Next coordinator action
 
-Verify W-401 contracts, then implement W-402's deterministic activation engine and fake host before
-adding either client protocol. Keep the merged alpha usable and main green throughout Slice 4.
+Complete PR #10's exact-revision native and clean-download packaged wake rehearsal, then audit
+W-406 against both live-client transcripts, hostile-content/credential scans, restart/coalescing
+contracts, documentation, and merged-main CI before requesting a separately authorized merge.

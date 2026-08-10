@@ -1,6 +1,6 @@
 # W-405: Harness configuration and operations
 
-Status: implementation candidate; native CI pending
+Status: verified
 
 ## Objective
 
@@ -33,5 +33,9 @@ Make Claude and Codex harnesses operable with explicit profile/thread ownership,
   `docs/harness-operations.md`; the relay inbox and profile lock remain authoritative.
 - Focused application, CLI, MCP, and Codex tests and strict cross-crate Clippy are green locally.
 
-The final acceptance item remains open until native Windows, Linux, and macOS behavior passes CI at
-the exact candidate revision.
+Exact head `5b5fd7128e42bedf14a83fa011b045e30aebd646` merged through PR
+[#9](https://github.com/spatial-bit/psst/pull/9). Standard CI, including native process/status
+tests, passed on Windows, Ubuntu, and macOS in
+[workflow 31414147304](https://github.com/spatial-bit/psst/actions/runs/31414147304); all three native
+dogfood builds passed in
+[workflow 31414147342](https://github.com/spatial-bit/psst/actions/runs/31414147342).

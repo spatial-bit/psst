@@ -1,6 +1,6 @@
 # W-404: Codex App Server adapter
 
-Status: local implementation and real Windows wake candidate; native CI pending
+Status: verified
 
 ## Objective
 
@@ -52,5 +52,10 @@ Do not use remote unauthenticated WebSockets, `turn/steer`, `turn/interrupt`, or
   `pending_count: 0`. All wake prompts were body-free and used no shell or filesystem fallback.
 - Strict workspace Clippy, formatting, patch integrity, Slice 4 contract tests, and the complete
   locked workspace test suite pass locally.
-- Native Windows/Ubuntu/macOS CI is green at `c699018`; an automated durable-resume smoke remains
-  required before this work unit is verified.
+- Exact final head `2389209dc145576409e4eb262ded0a486cf54bae` merged through PR
+  [#8](https://github.com/spatial-bit/psst/pull/8). Standard CI passed on Windows, Ubuntu, and
+  macOS in [workflow 31414145865](https://github.com/spatial-bit/psst/actions/runs/31414145865),
+  and all three native dogfood builds passed in
+  [workflow 31414145855](https://github.com/spatial-bit/psst/actions/runs/31414145855). The durable
+  thread record/resume test and the recorded same-database/same-thread live Windows restart prove
+  exact identity resumption without creating a replacement thread.
