@@ -130,6 +130,9 @@ def main() -> None:
         run("package-release.py", *package_arguments)
         first_archive = archive.read_bytes()
         run("inspect-release.py", "--archive", archive, "--version", "0.1.0-alpha.1", "--revision", "a" * 40, "--target", "windows-x86_64", "--forbidden-canary", "must-not-ship")
+        noncanonical_archive = root / "renamed.zip"
+        noncanonical_archive.write_bytes(archive.read_bytes())
+        run("inspect-release.py", "--archive", noncanonical_archive, "--version", "0.1.0-alpha.1", "--revision", "a" * 40, "--target", "windows-x86_64", success=False)
         with zipfile.ZipFile(archive) as packaged:
             root_name = "psst-v0.1.0-alpha.1-windows-x86_64"
             expected = {f"{root_name}/", *(f"{root_name}/{name}" for name in ("INSTALL.md", "LICENSE", "MANIFEST.json", "README.md", "SBOM.spdx.json", "psst.exe", "psst-mcp.exe", "psst-relay.exe"))}
@@ -137,6 +140,9 @@ def main() -> None:
             manifest = json.loads(packaged.read(f"{root_name}/MANIFEST.json"))
             assert manifest["schema"] == "psst.release-manifest.v1"
             assert {item["path"] for item in manifest["files"]} == {"INSTALL.md", "LICENSE", "README.md", "SBOM.spdx.json", "psst.exe", "psst-mcp.exe", "psst-relay.exe"}
+            sbom = json.loads(packaged.read(f"{root_name}/SBOM.spdx.json"))
+            expected_namespace = hashlib.sha256(f"0.1.0-alpha.1:{'a' * 40}".encode()).hexdigest()
+            assert sbom["documentNamespace"] == f"https://github.com/spatial-bit/psst/sbom/{expected_namespace}"
         archive.unlink()
         run("package-release.py", *package_arguments)
         assert archive.read_bytes() == first_archive
