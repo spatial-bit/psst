@@ -28,7 +28,7 @@ Gate: migration, restart persistence, idempotency, uniqueness, lease, replay, an
 
 ## Slice 2 — Relay and typed client
 
-Status: active
+Status: verified
 
 Versioned HTTP API, long polling, structured errors, shutdown, health, and typed Rust client.
 
@@ -49,7 +49,27 @@ Gate: a real relay and typed client pass restart, offline delivery, replay, conc
 
 ## Slice 3 — CLI and cooperative MCP
 
+Status: active
+
 Human CLI, safe token storage, MCP tools, and cooperative Claude/Codex workflows.
+
+Execution order:
+
+```text
+W-301 Contracts and architecture
+ ├─> W-302 Configuration, profiles, and credential store
+ │    └─> W-303 Cooperative session runtime
+ ├─> W-304 CLI shell and relay operations
+ │    └──────────────┐
+ │                   └─> W-305 Human squad and messaging CLI
+ └─> W-306 MCP transport and schema contract
+      └──────────────┐
+                     └─> W-307 Cooperative MCP tools
+W-305 + W-307 -> W-308 Dogfood artifacts and documentation
+W-301 through W-308 -> W-309 Slice 3 cooperative gate
+```
+
+Gate: two independently launched interactive Claude Code and Codex agents exchange and acknowledge messages through the same relay using cooperative MCP tools; automated two-profile tests prove replay, restart, resume, heartbeat, and redaction on all supported platforms.
 
 ## Slice 4 — Harnessed activation
 

@@ -27,4 +27,5 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
-
+      - name: Pre-tag release preparation contracts
+        run: python scripts/test-release-prep.py

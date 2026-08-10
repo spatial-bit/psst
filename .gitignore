@@ -1,4 +1,6 @@
 /target/
+/target-*/
+/.target-*/
 /.idea/
 /.vscode/
 *.db
@@ -10,4 +12,3 @@
 !.env.example
 /dist/
 /artifacts/
-

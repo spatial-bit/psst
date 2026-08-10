@@ -1,8 +1,8 @@
 # Progress
 
-Current slice: 2 — Relay and typed client
-Current gate: Slice 1 satisfied on merged `main`; Slice 2 decomposed for execution
-Last reconciled: 2026-08-07
+Current slice: 3 — CLI and cooperative MCP
+Current gate: Slice 3 automated gate verified; live cooperative walkthrough pending
+Last reconciled: 2026-08-09
 
 ## Verified
 
@@ -37,22 +37,62 @@ Last reconciled: 2026-08-07
 - W-208 native development artifacts independently approved: revision-stamped relay-only archives, exact inventory/path scanning, bundled-SQLite inspection, native startup smoke, and clean downloaded rehearsal without Rust.
 - W-208 revision `c3340fe` passed standard CI and native artifact builds on Windows x86-64, Linux x86-64, and macOS ARM64: <https://github.com/spatial-bit/psst/actions/runs/31238500463> and <https://github.com/spatial-bit/psst/actions/runs/31238500451>.
 - Trusted upload and clean-download rehearsal retained three 14-day dogfood artifacts and passed on all three native platforms: <https://github.com/spatial-bit/psst/actions/runs/31238613310>.
+- Slice 2 merged to `main` at `d8d6d88`; merged standard CI and native development-artifact workflows passed: <https://github.com/spatial-bit/psst/actions/runs/31239047533> and <https://github.com/spatial-bit/psst/actions/runs/31239047525>.
+- W-301 Slice 3 contracts independently approved with 174 passing tests: complete CLI grammar and
+  versioned output, exhaustive safe error and authority mapping, full closed MCP schemas, a pinned
+  Rust 1.89-compatible SDK, and a Psst-owned bounded/redacting stdio transport with structured cleanup.
+- W-301 revision `83fa79a` passed GitHub Actions on Windows, Linux, and macOS plus native Windows
+  x86-64, Linux x86-64, and macOS ARM64 artifact builds: <https://github.com/spatial-bit/psst/actions/runs/31246729089>
+  and <https://github.com/spatial-bit/psst/actions/runs/31246729075>.
+- W-302 configuration, native profile locking, and protected credential storage are independently
+  approved. W-303's cooperative runtime is independently approved after aggregate adversarial
+  review. W-304's CLI shell and relay operations, W-305's human squad/messaging CLI, W-306's MCP
+  transport/schema, and W-307's cooperative MCP dispatch are independently approved.
+- The integrated W-302 through W-307 candidate at
+  `a4af73ad800dde8ceff8209768685e0d7cf19809` passed the complete workspace test, strict Clippy, and
+  format gate on Windows, Ubuntu, and macOS in
+  [workflow 31274551562](https://github.com/spatial-bit/psst/actions/runs/31274551562).
 
 ## Active
 
-- Slice 2 complete; draft PR ready for final merge review.
+- The operator-directed `ae55f7b` live rehearsal passed bidirectional MCP send/replay/explicit-ack,
+  linked reply, roster/heartbeat, and Claude restart/resume. It found Codex global-registration
+  profile contention; the repair defers ownership until protected tool use.
+- The lifecycle repair at `30c77d34c510e851f69d1418ff3eacc09b831cd2` passed all three standard
+  native CI jobs and all three native cooperative artifact jobs. A post-repair Codex-only smoke then
+  proved real MCP join/status, process exit, fresh-session resume/roster, and clean leave with the
+  exact passing revision. The temporary registration and relay were removed afterward.
+- W-501 through W-503 release-contract, portable-asset, and checkoutless-rehearsal automation are
+  implemented as unreleased candidates. A signed authorized tag, native exact-tag candidate run,
+  owner-controlled isolated trusted-LAN rehearsal, and independent reviewer attestation remain
+  pending. W-504 publication remains separately authorization-gated.
+- The optional loopback CLI process-boundary ambiguity proxy remains deliberately unexecuted because
+  forwarding ephemeral test credentials requires explicit user authorization. Approved
+  client/runtime evidence already proves exact prepared-send retry below that process boundary.
 
 ## Ready
 
-- Slice 3 CLI and cooperative MCP work is ready after Slice 2 merge.
+- W-308 cooperative dogfood artifacts and documentation are verified. The reviewed revision
+  `c2e4dad3adf67b271a1b6a03a700711818e81503` passed all three native builds and all three
+  checkoutless clean-download rehearsals in
+  [workflow 31272964987](https://github.com/spatial-bit/psst/actions/runs/31272964987).
+- W-309's automated reliability gate is independently approved and verified at
+  `a4af73ad800dde8ceff8209768685e0d7cf19809`. Standard Windows/Ubuntu/macOS CI passed in
+  [workflow 31274551562](https://github.com/spatial-bit/psst/actions/runs/31274551562); all three
+  native reliability jobs and all three checkoutless artifact rehearsals passed in
+  [workflow 31274817025](https://github.com/spatial-bit/psst/actions/runs/31274817025). The distinct
+  live Claude Code/Codex walkthrough remains pending and is not implied by this automated evidence.
 
 ## Gate evidence
 
-- Windows local formatting: passed
-- Windows local lint: passed
-- Windows local tests: passed
-- GitHub Actions matrix: passed on Windows, Linux, and macOS
+- W-301 Windows local formatting, strict lint, and 174-test workspace suite: passed
+- W-301 independent contract and adversarial reviews: passed
+- W-301 GitHub Actions matrix: passed on Windows, Linux, and macOS
+- W-301 native artifact builds: passed on Windows x86-64, Linux x86-64, and macOS ARM64
 
 ## Next coordinator action
 
-Perform final Slice 2 PR review, merge the green draft PR, then decompose and begin Slice 3 CLI/cooperative MCP work.
+Complete W-309's live Claude Code/Codex walkthrough with distinct profiles at the exact candidate
+revision. The loopback ambiguous-commit CLI proxy remains behind explicit user authorization. Alpha
+tagging also remains blocked on owner-provisioned signing trust, protected-review configuration, an
+isolated trusted-LAN rehearsal, and separate explicit tag/publication authorizations.

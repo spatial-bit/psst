@@ -1,0 +1,24 @@
+[package]
+name = "psst-mcp"
+description = "Cooperative stdio MCP adapter for Psst"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+psst-application = { path = "../psst-application" }
+psst-client = { path = "../psst-client" }
+psst-protocol = { path = "../psst-protocol" }
+rmcp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+psst-relay = { path = "../psst-relay" }
+tempfile.workspace = true

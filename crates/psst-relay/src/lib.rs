@@ -247,11 +247,15 @@ pub fn init_tracing(
     match format {
         LogFormat::Text => tracing_subscriber::registry()
             .with(filter)
-            .with(tracing_subscriber::fmt::layer())
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .try_init()?,
         LogFormat::Json => tracing_subscriber::registry()
             .with(filter)
-            .with(tracing_subscriber::fmt::layer().json())
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_writer(std::io::stderr),
+            )
             .try_init()?,
     }
     Ok(())
@@ -267,6 +271,15 @@ impl std::fmt::Display for ShutdownTimedOut {
 }
 
 impl std::error::Error for ShutdownTimedOut {}
+
+/// Operational facts emitted only after the database is open and the listener is bound.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelayStartup {
+    pub bind: SocketAddr,
+    pub database: PathBuf,
+    pub schema_version: u32,
+    pub trusted_lan_warning: Option<&'static str>,
+}
 
 /// Converts a serving failure to a process result. A forced-shutdown timeout
 /// exits immediately because waiting for runtime teardown could wait forever
@@ -311,7 +324,7 @@ enum StoreCommand {
         release: std::sync::mpsc::Receiver<()>,
         reply: oneshot::Sender<Result<(), WorkerError>>,
     },
-    #[cfg(test)]
+    #[cfg(any(test, feature = "reliability-test-support"))]
     DelayNextSendReply(
         Duration,
         std::sync::mpsc::Sender<()>,
@@ -390,7 +403,7 @@ impl StoreCommand {
             Self::ControlledBlock { reply, .. } => {
                 let _ = reply.send(Err(WorkerError::Unavailable));
             }
-            #[cfg(test)]
+            #[cfg(any(test, feature = "reliability-test-support"))]
             Self::DelayNextSendReply(_, _, reply) => {
                 let _ = reply.send(Err(WorkerError::Unavailable));
             }
@@ -547,7 +560,7 @@ impl StoreWorker {
             .name("psst-sqlite".into())
             .spawn(move || {
                 let mut store = store;
-                #[cfg(test)]
+                #[cfg(any(test, feature = "reliability-test-support"))]
                 let mut next_send_reply_delay = None;
                 while let Ok(command) = receiver.recv() {
                     if worker_shutdown.load(Ordering::Acquire) {
@@ -573,7 +586,7 @@ impl StoreWorker {
                             let result = release.recv().map_err(|_| WorkerError::Unavailable);
                             let _ = reply.send(result);
                         }
-                        #[cfg(test)]
+                        #[cfg(any(test, feature = "reliability-test-support"))]
                         StoreCommand::DelayNextSendReply(delay, completed, reply) => {
                             next_send_reply_delay = Some((delay, completed));
                             let _ = reply.send(Ok(()));
@@ -635,14 +648,14 @@ impl StoreWorker {
                                 worker_notifications
                                     .notify(&outcome.message.message.semantics.recipient);
                             }
-                            #[cfg(test)]
+                            #[cfg(any(test, feature = "reliability-test-support"))]
                             let delayed_completion =
                                 next_send_reply_delay.take().map(|(delay, completed)| {
                                     std::thread::sleep(delay);
                                     completed
                                 });
                             let _ = reply.send(result);
-                            #[cfg(test)]
+                            #[cfg(any(test, feature = "reliability-test-support"))]
                             if let Some(completed) = delayed_completion {
                                 let _ = completed.send(());
                             }
@@ -756,8 +769,9 @@ impl StoreWorker {
         .await
     }
 
-    #[cfg(test)]
-    async fn delay_next_send_reply(
+    #[cfg(any(test, feature = "reliability-test-support"))]
+    #[doc(hidden)]
+    pub async fn reliability_delay_next_send_reply(
         &self,
         delay: Duration,
     ) -> Result<std::sync::mpsc::Receiver<()>, WorkerError> {
@@ -1842,7 +1856,7 @@ pub async fn serve(
     config: RelayConfig,
     shutdown: watch::Receiver<bool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    serve_with_router_factory(config, shutdown, |worker, config, shutdown| {
+    serve_with_router_factory(config, shutdown, None, |worker, config, shutdown| {
         router_with_limits_and_shutdown(
             worker,
             config.max_body_bytes,
@@ -1854,6 +1868,32 @@ pub async fn serve(
     .await
 }
 
+/// Runs the production relay and reports readiness after the database opens and listener binds.
+///
+/// # Errors
+/// Returns the same bounded serving errors as [`serve`].
+pub async fn serve_with_startup(
+    config: RelayConfig,
+    shutdown: watch::Receiver<bool>,
+    startup: oneshot::Sender<RelayStartup>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    serve_with_router_factory(
+        config,
+        shutdown,
+        Some(startup),
+        |worker, config, shutdown| {
+            router_with_limits_and_shutdown(
+                worker,
+                config.max_body_bytes,
+                config.max_in_flight_requests,
+                config.request_timeout,
+                shutdown,
+            )
+        },
+    )
+    .await
+}
+
 /// Runs the production server while exposing a read-only worker probe to reliability tests.
 #[cfg(feature = "reliability-test-support")]
 #[doc(hidden)]
@@ -1862,7 +1902,7 @@ pub async fn serve_with_reliability_probe(
     shutdown: watch::Receiver<bool>,
     probe: oneshot::Sender<StoreWorker>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    serve_with_router_factory(config, shutdown, move |worker, config, shutdown| {
+    serve_with_router_factory(config, shutdown, None, move |worker, config, shutdown| {
         let _ = probe.send(worker.clone());
         router_with_limits_and_shutdown(
             worker,
@@ -1878,6 +1918,7 @@ pub async fn serve_with_reliability_probe(
 async fn serve_with_router_factory(
     config: RelayConfig,
     mut shutdown: watch::Receiver<bool>,
+    startup: Option<oneshot::Sender<RelayStartup>>,
     make_router: impl FnOnce(StoreWorker, &RelayConfig, watch::Receiver<bool>) -> Router,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     config.validate()?;
@@ -1890,7 +1931,20 @@ async fn serve_with_router_factory(
     )?;
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     let bound = listener.local_addr()?;
-    tracing::info!(bind = %bound, "relay started");
+    tracing::info!(
+        bind = %bound,
+        database = %config.database.display(),
+        schema_version = psst_store::current_schema_version(),
+        "relay started"
+    );
+    if let Some(startup) = startup {
+        let _ = startup.send(RelayStartup {
+            bind: bound,
+            database: config.database.clone(),
+            schema_version: psst_store::current_schema_version(),
+            trusted_lan_warning: config.trusted_lan_warning(),
+        });
+    }
     let shutdown_started = Arc::new(tokio::sync::Notify::new());
     let shutdown_notice = Arc::clone(&shutdown_started);
     let server = axum::serve(
@@ -3037,6 +3091,7 @@ mod tests {
         let task = tokio::spawn(serve_with_router_factory(
             config,
             shutdown_rx,
+            None,
             move |worker, config, shutdown| {
                 let slow = move || {
                     let started = Arc::clone(&route_started);
@@ -3488,7 +3543,7 @@ mod tests {
         .await
         .unwrap();
         let completion = worker
-            .delay_next_send_reply(Duration::from_secs(1))
+            .reliability_delay_next_send_reply(Duration::from_secs(1))
             .await
             .unwrap();
         let response = app.oneshot(
@@ -3815,7 +3870,7 @@ mod tests {
         let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
         let _bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
         let send_completed = worker
-            .delay_next_send_reply(Duration::from_millis(750))
+            .reliability_delay_next_send_reply(Duration::from_millis(750))
             .await
             .unwrap();
         let request = || {

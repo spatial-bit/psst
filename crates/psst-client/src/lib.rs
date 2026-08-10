@@ -6,16 +6,19 @@ use http::header::{AUTHORIZATION, CONTENT_TYPE};
 use psst_protocol::{
     AckMessagesRequest, AckMessagesResponse, ArchiveSquadRequest, ArchiveSquadResponse,
     CreateSquadRequest, CreateSquadResponse, ErrorEnvelope, GetSquadResponse, HealthResponse,
-    HeartbeatRequest, HeartbeatResponse, InboxResponse, JSON_CONTENT_TYPE, JoinSquadRequest,
-    JoinSquadResponse, LeaveSquadRequest, LeaveSquadResponse, ListSquadsResponse,
+    HeartbeatRequest, HeartbeatResponse, InboxQuery, InboxResponse, JSON_CONTENT_TYPE,
+    JoinSquadRequest, JoinSquadResponse, LeaveSquadRequest, LeaveSquadResponse, ListSquadsResponse,
     MessagePriorityDto, MessageSequence, ReadyResponse, ResumeSquadRequest, RosterResponse,
     SESSION_CREDENTIAL_HEADER, SendMessageRequest, SendMessageResponse, SessionResponse,
-    SquadSummary, TranscriptResponse, Validate,
+    SquadSummary, TranscriptQuery, TranscriptResponse, Validate,
 };
 use reqwest::{Method, StatusCode, Url};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{fmt, future::Future, pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
+
+mod credential_store;
+pub use credential_store::{CredentialBinding, CredentialFault, CredentialStore};
 
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
@@ -66,6 +69,11 @@ pub struct Credential {
 }
 
 impl Credential {
+    /// Returns the non-secret instance identity bound into this authority.
+    #[must_use]
+    pub fn instance_id(&self) -> &str {
+        &self.instance_id
+    }
     fn from_response(value: &reqwest::header::HeaderValue) -> Result<Self, Error> {
         let raw = value.to_str().map_err(|_| Error::MalformedCredential)?;
         // Reuse the protocol's canonical parser without retaining another token copy.
@@ -106,6 +114,7 @@ impl fmt::Debug for Session {
 pub enum Error {
     InvalidBaseUrl,
     InvalidConfiguration,
+    InvalidRequest,
     MalformedCredential,
     Transport(reqwest::Error),
     Timeout,
@@ -134,6 +143,7 @@ impl fmt::Display for Error {
         match self {
             Self::InvalidBaseUrl => formatter.write_str("invalid relay base URL"),
             Self::InvalidConfiguration => formatter.write_str("invalid client configuration"),
+            Self::InvalidRequest => formatter.write_str("invalid client request"),
             Self::MalformedCredential => {
                 formatter.write_str("relay returned a malformed credential")
             }
@@ -186,26 +196,55 @@ trait ResponseValidate {
     fn validate_response(&self) -> Result<(), Error>;
 }
 
-macro_rules! response_needs_only_wire_validation {
+macro_rules! response_uses_protocol_validation {
     ($($ty:ty),+ $(,)?) => {
         $(impl ResponseValidate for $ty {
-            fn validate_response(&self) -> Result<(), Error> { Ok(()) }
+            fn validate_response(&self) -> Result<(), Error> {
+                self.validate().map_err(|_| Error::MalformedResponse { status: 200 })
+            }
         })+
     };
 }
 
-response_needs_only_wire_validation!(
+response_uses_protocol_validation!(
     Vec<SquadSummary>,
     SquadSummary,
     ArchiveSquadResponse,
-    SessionResponse,
     LeaveSquadResponse,
     RosterResponse,
-    HeartbeatResponse,
     SendMessageResponse,
     AckMessagesResponse,
     TranscriptResponse,
 );
+
+impl ResponseValidate for SessionResponse {
+    fn validate_response(&self) -> Result<(), Error> {
+        use psst_core::{AgentId, InstanceId, MemberName, MembershipId, Role, SquadId, SquadName};
+        let valid = AgentId::new(&self.agent_id).is_ok()
+            && MembershipId::new(&self.membership_id).is_ok()
+            && InstanceId::new(&self.instance_id).is_ok()
+            && SquadId::new(&self.squad.id).is_ok()
+            && SquadName::new(&self.squad.name).is_ok()
+            && MemberName::new(&self.member_name).is_ok()
+            && Role::new(&self.role).is_ok()
+            && self.squad.validate().is_ok()
+            && (1..=300).contains(&self.heartbeat_interval_seconds)
+            && (2..=900).contains(&self.lease_seconds)
+            && self.lease_seconds > self.heartbeat_interval_seconds;
+        valid
+            .then_some(())
+            .ok_or(Error::MalformedResponse { status: 200 })
+    }
+}
+
+impl ResponseValidate for HeartbeatResponse {
+    fn validate_response(&self) -> Result<(), Error> {
+        (1..=300)
+            .contains(&self.heartbeat_interval_seconds)
+            .then_some(())
+            .ok_or(Error::MalformedResponse { status: 200 })
+    }
+}
 
 impl ResponseValidate for HealthResponse {
     fn validate_response(&self) -> Result<(), Error> {
@@ -250,15 +289,47 @@ impl Sleeper for TokioSleeper {
 }
 
 /// Immutable send operation whose idempotency key survives any failed attempt.
-#[derive(Debug)]
+#[derive(Clone, Eq, Hash, PartialEq)]
+pub struct PreparedSendIdentity(Arc<str>);
+
+impl fmt::Debug for PreparedSendIdentity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("PreparedSendIdentity([OPAQUE])")
+    }
+}
+
+#[derive(Clone)]
 pub struct PreparedSend {
-    request: SendMessageRequest,
+    request: Arc<SendMessageRequest>,
+    identity: PreparedSendIdentity,
 }
 
 impl PreparedSend {
     #[must_use]
-    pub const fn request(&self) -> &SendMessageRequest {
+    pub fn request(&self) -> &SendMessageRequest {
         &self.request
+    }
+
+    /// Stable identity for this in-memory operation and its retry attempts.
+    #[must_use]
+    pub fn operation_identity(&self) -> PreparedSendIdentity {
+        self.identity.clone()
+    }
+
+    /// Bytes retained while this operation is owned by a session supervisor.
+    #[must_use]
+    pub fn retained_body_bytes(&self) -> usize {
+        self.request.body.len()
+    }
+}
+
+impl fmt::Debug for PreparedSend {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedSend")
+            .field("operation", &"[REDACTED]")
+            .field("body", &"[REDACTED]")
+            .finish_non_exhaustive()
     }
 }
 
@@ -266,6 +337,12 @@ impl PreparedSend {
 // `# Errors` paragraph on each thin endpoint wrapper would obscure the API surface.
 #[allow(clippy::missing_errors_doc)]
 impl Client {
+    /// Returns this client's canonical relay origin, always with a trailing slash.
+    #[must_use]
+    pub fn origin(&self) -> &str {
+        self.base.as_str()
+    }
+
     /// Creates a bounded client. Base URLs must be absolute HTTP(S) origins with no query,
     /// fragment, credentials, or non-root path.
     ///
@@ -355,6 +432,7 @@ impl Client {
         &self,
         request: &CreateSquadRequest,
     ) -> Result<CreateSquadResponse, Error> {
+        request.validate().map_err(|_| Error::InvalidRequest)?;
         self.execute(
             Method::POST,
             "v1/squads",
@@ -378,6 +456,7 @@ impl Client {
         .await
     }
     pub async fn join(&self, squad: &str, request: &JoinSquadRequest) -> Result<Session, Error> {
+        request.validate().map_err(|_| Error::InvalidRequest)?;
         let path = squad_path(squad, "/join")?;
         let (response, credential) = self
             .execute_issued(Method::POST, &path, request, None)
@@ -397,6 +476,7 @@ impl Client {
         request: &ResumeSquadRequest,
         credential: &Credential,
     ) -> Result<Session, Error> {
+        request.validate().map_err(|_| Error::InvalidRequest)?;
         let path = squad_path(squad, "/resume")?;
         let (response, credential) = self
             .execute_issued(Method::POST, &path, request, Some(credential))
@@ -425,6 +505,10 @@ impl Client {
             RetryClass::Never,
         )
         .await
+        .map_err(|error| match error {
+            Error::Transport(_) | Error::Timeout => Error::OutcomeUnknown,
+            other => other,
+        })
     }
     pub async fn archive_squad(
         &self,
@@ -463,6 +547,7 @@ impl Client {
         request: &HeartbeatRequest,
         credential: &Credential,
     ) -> Result<HeartbeatResponse, Error> {
+        request.validate().map_err(|_| Error::InvalidRequest)?;
         self.execute(
             Method::POST,
             "v1/heartbeat",
@@ -493,15 +578,19 @@ impl Client {
         reply_to: Option<String>,
         correlation_id: Option<String>,
     ) -> Result<PreparedSend, Error> {
+        let key = dedupe_key()?;
+        let request = SendMessageRequest {
+            recipient,
+            body,
+            priority,
+            dedupe_key: key,
+            reply_to,
+            correlation_id,
+        };
+        request.validate().map_err(|_| Error::InvalidRequest)?;
         Ok(PreparedSend {
-            request: SendMessageRequest {
-                recipient,
-                body,
-                priority,
-                dedupe_key: dedupe_key()?,
-                reply_to,
-                correlation_id,
-            },
+            identity: PreparedSendIdentity(Arc::from(request.dedupe_key.as_str())),
+            request: Arc::new(request),
         })
     }
     pub async fn send_prepared(
@@ -517,6 +606,7 @@ impl Client {
         request: &SendMessageRequest,
         credential: &Credential,
     ) -> Result<SendMessageResponse, Error> {
+        request.validate().map_err(|_| Error::InvalidRequest)?;
         self.execute(
             Method::POST,
             "v1/messages",
@@ -533,6 +623,12 @@ impl Client {
         wait_seconds: u8,
         credential: &Credential,
     ) -> Result<InboxResponse, Error> {
+        InboxQuery {
+            limit,
+            wait_seconds,
+        }
+        .validate()
+        .map_err(|_| Error::InvalidRequest)?;
         let path = format!("v1/inbox?limit={limit}&wait={wait_seconds}");
         let timeout = Duration::from_secs(u64::from(wait_seconds))
             .saturating_add(self.config.long_poll_margin);
@@ -551,6 +647,7 @@ impl Client {
         request: &AckMessagesRequest,
         credential: &Credential,
     ) -> Result<AckMessagesResponse, Error> {
+        request.validate().map_err(|_| Error::InvalidRequest)?;
         self.execute(
             Method::POST,
             "v1/messages/ack",
@@ -568,6 +665,9 @@ impl Client {
         limit: u16,
         credential: &Credential,
     ) -> Result<TranscriptResponse, Error> {
+        TranscriptQuery { after, limit }
+            .validate()
+            .map_err(|_| Error::InvalidRequest)?;
         let base = squad_path(squad, "/transcript")?;
         self.execute(
             Method::GET,
@@ -862,9 +962,7 @@ fn dedupe_key() -> Result<String, Error> {
 }
 
 fn squad_path(squad: &str, suffix: &str) -> Result<String, Error> {
-    if squad.is_empty() {
-        return Err(Error::InvalidBaseUrl);
-    }
+    psst_core::SquadName::new(squad).map_err(|_| Error::InvalidRequest)?;
     let mut encoded = String::new();
     for byte in squad.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
@@ -925,6 +1023,184 @@ mod tests {
         server_with_handle(app).await.0
     }
 
+    #[tokio::test]
+    async fn invalid_send_requests_are_rejected_before_transport() {
+        let client = client("http://127.0.0.1:1");
+        for (recipient, body, reply_to, correlation_id) in [
+            ("x".repeat(65), "ok".into(), None, None),
+            (
+                "worker".into(),
+                "x".repeat(psst_core::MessageBody::MAX_BYTES + 1),
+                None,
+                None,
+            ),
+            (
+                "worker".into(),
+                "ok".into(),
+                Some(format!("msg_{}", "a".repeat(125))),
+                None,
+            ),
+            ("worker".into(), "ok".into(), None, Some("x".repeat(257))),
+        ] {
+            assert!(matches!(
+                client.prepare_send(
+                    recipient,
+                    body,
+                    MessagePriorityDto::Normal,
+                    reply_to,
+                    correlation_id,
+                ),
+                Err(Error::InvalidRequest)
+            ));
+        }
+        let credential = Credential::from_response(&reqwest::header::HeaderValue::from_static(
+            "ins_one.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        ))
+        .unwrap();
+        let request = SendMessageRequest {
+            recipient: "worker".into(),
+            body: "ok".into(),
+            priority: MessagePriorityDto::Normal,
+            dedupe_key: "x".repeat(257),
+            reply_to: None,
+            correlation_id: None,
+        };
+        assert!(matches!(
+            client.send_with_request(&request, &credential).await,
+            Err(Error::InvalidRequest)
+        ));
+    }
+
+    #[tokio::test]
+    async fn every_public_request_family_rejects_invalid_values_before_transport() {
+        let client = client("http://127.0.0.1:1");
+        let credential = Credential::from_response(&reqwest::header::HeaderValue::from_static(
+            "ins_one.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        ))
+        .unwrap();
+        assert!(matches!(
+            client
+                .create_squad(&CreateSquadRequest {
+                    name: "INVALID".into(),
+                    mission: "mission".into(),
+                })
+                .await,
+            Err(Error::InvalidRequest)
+        ));
+        let invalid_client = ClientMetadata {
+            kind: String::new(),
+            hostname: None,
+            version: None,
+        };
+        assert!(matches!(
+            client
+                .join(
+                    "alpha",
+                    &JoinSquadRequest {
+                        name: "worker".into(),
+                        role: "worker".into(),
+                        mode: AgentModeDto::Cooperative,
+                        client: invalid_client.clone(),
+                        mission: None,
+                    },
+                )
+                .await,
+            Err(Error::InvalidRequest)
+        ));
+        assert!(matches!(
+            client
+                .resume(
+                    "alpha",
+                    &ResumeSquadRequest {
+                        mode: AgentModeDto::Cooperative,
+                        client: invalid_client,
+                    },
+                    &credential,
+                )
+                .await,
+            Err(Error::InvalidRequest)
+        ));
+        assert!(matches!(
+            client
+                .heartbeat(
+                    &HeartbeatRequest {
+                        availability: psst_protocol::AvailabilityDto::Unknown,
+                        availability_source: psst_protocol::AvailabilitySourceDto::AgentReported,
+                    },
+                    &credential,
+                )
+                .await,
+            Err(Error::InvalidRequest)
+        ));
+        assert!(matches!(
+            client
+                .acknowledge(
+                    &AckMessagesRequest {
+                        message_ids: vec![],
+                    },
+                    &credential,
+                )
+                .await,
+            Err(Error::InvalidRequest)
+        ));
+        assert!(matches!(
+            client.inbox(0, 0, &credential).await,
+            Err(Error::InvalidRequest)
+        ));
+        assert!(matches!(
+            client
+                .transcript("alpha", MessageSequence::default(), 0, &credential)
+                .await,
+            Err(Error::InvalidRequest)
+        ));
+        assert!(matches!(
+            client.describe_squad("INVALID").await,
+            Err(Error::InvalidRequest)
+        ));
+        assert!(matches!(
+            client.roster(&"x".repeat(65), &credential).await,
+            Err(Error::InvalidRequest)
+        ));
+    }
+
+    #[test]
+    fn session_and_heartbeat_responses_enforce_semantic_identity_and_cadence() {
+        let mut session: SessionResponse = serde_json::from_value(serde_json::json!({
+            "agent_id": "agt_one",
+            "membership_id": "mem_one",
+            "instance_id": "ins_one",
+            "squad": {
+                "id": "sqd_one",
+                "name": "alpha",
+                "mission": "test",
+                "state": "active",
+                "created_at": "2026-01-01T00:00:00.000Z"
+            },
+            "member_name": "worker",
+            "role": "worker",
+            "heartbeat_interval_seconds": 10,
+            "lease_seconds": 30,
+            "lease_expires_at": "2026-01-01T00:00:30.000Z"
+        }))
+        .unwrap();
+        assert!(session.validate_response().is_ok());
+        session.agent_id = "agent-one".into();
+        assert!(matches!(
+            session.validate_response(),
+            Err(Error::MalformedResponse { status: 200 })
+        ));
+        session.agent_id = "agt_one".into();
+        session.heartbeat_interval_seconds = 301;
+        assert!(session.validate_response().is_err());
+
+        let heartbeat: HeartbeatResponse = serde_json::from_value(serde_json::json!({
+            "lease_expires_at": "2026-01-01T00:00:30.000Z",
+            "heartbeat_interval_seconds": 0
+        }))
+        .unwrap();
+        assert!(heartbeat.validate_response().is_err());
+    }
+
     async fn server_with_handle(app: Router) -> (String, tokio::task::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -966,6 +1242,12 @@ mod tests {
             ..ClientConfig::default()
         };
         assert!(Client::new("http://host", config).is_err());
+        assert_eq!(
+            Client::new("HTTP://Example.COM:80/", ClientConfig::default())
+                .unwrap()
+                .origin(),
+            "http://example.com/"
+        );
     }
 
     #[tokio::test]
@@ -1396,6 +1678,38 @@ mod tests {
         .unwrap();
         assert!(matches!(
             client(&base).inbox(100, 0, &credential).await,
+            Err(Error::MalformedResponse { status: 200 })
+        ));
+
+        let app = Router::new().route(
+            "/v1/messages",
+            post(|| async {
+                Json(serde_json::json!({
+                    "message": {
+                        "sequence": 1,
+                        "id": "not-a-message-id",
+                        "squad": "sqd_one",
+                        "sender": "mem_one",
+                        "recipient": "mem_two",
+                        "body": "x",
+                        "priority": "normal",
+                        "created_at": "2026-08-07T01:02:03.004Z"
+                    },
+                    "idempotent_replay": false
+                }))
+            }),
+        );
+        let base = server(app).await;
+        let request = SendMessageRequest {
+            recipient: "worker".into(),
+            body: "hello".into(),
+            priority: MessagePriorityDto::Normal,
+            dedupe_key: "client-test-key".into(),
+            reply_to: None,
+            correlation_id: None,
+        };
+        assert!(matches!(
+            client(&base).send_with_request(&request, &credential).await,
             Err(Error::MalformedResponse { status: 200 })
         ));
     }
