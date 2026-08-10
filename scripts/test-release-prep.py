@@ -71,6 +71,8 @@ def validate_workflow_contracts() -> None:
     assert "gh release create v0.1.0-alpha.1" in publication
     assert "--prerelease" in publication
     assert "verify-published-release.py" in publication
+    assert 'gh release download v0.1.0-alpha.1 --repo "$REPOSITORY" --dir published' in publication
+    assert "--pattern" not in publication
 
     for read_only_workflow in (candidate, proof, attestation):
         assert "git tag" not in read_only_workflow
@@ -182,14 +184,24 @@ def main() -> None:
         published_proofs = {"LIVE-PROOF": b"live", "LAN-PROOF": b"lan", "PROOF-METADATA.json": b"{}"}
         for name, content in published_proofs.items():
             (published / name).write_bytes(content)
+        checksum_bytes = ("\n".join(lines) + "\n").encode("ascii")
+        evidence_bytes = b'{"schema":"psst.release-evidence.v1"}\n'
+        verifier_bytes = (SCRIPTS / "verify-published-release.py").read_bytes()
+        (published / "SHA256SUMS").write_bytes(checksum_bytes)
+        (published / "RELEASE-EVIDENCE.json").write_bytes(evidence_bytes)
+        (published / "verify-published-release.py").write_bytes(verifier_bytes)
         attestation = root / "attestation.json"
-        attestation.write_text(json.dumps({"schema":"psst.release-review-attestation.v1","decision":"approved","sha256sums":lines,"live_proof_sha256":hashlib.sha256(b"live").hexdigest(),"isolated_lan_proof_sha256":hashlib.sha256(b"lan").hexdigest(),"proof_metadata_sha256":hashlib.sha256(b"{}").hexdigest()}), encoding="utf-8")
+        attestation.write_text(json.dumps({"schema":"psst.release-review-attestation.v1","decision":"approved","sha256sums":lines,"sha256sums_sha256":hashlib.sha256(checksum_bytes).hexdigest(),"release_evidence_sha256":hashlib.sha256(evidence_bytes).hexdigest(),"post_download_verifier_sha256":hashlib.sha256(verifier_bytes).hexdigest(),"live_proof_sha256":hashlib.sha256(b"live").hexdigest(),"isolated_lan_proof_sha256":hashlib.sha256(b"lan").hexdigest(),"proof_metadata_sha256":hashlib.sha256(b"{}").hexdigest()}), encoding="utf-8")
+        (published / "REVIEWER-ATTESTATION.json").write_bytes(attestation.read_bytes())
         run("verify-published-release.py", "--directory", published, "--attestation", attestation)
         changed_archive = next(iter(release_names))
         (published / changed_archive).write_bytes(b"changed")
         run("verify-published-release.py", "--directory", published, "--attestation", attestation, success=False)
         (published / changed_archive).write_bytes(changed_archive.encode("ascii"))
         (published / "LIVE-PROOF").write_bytes(b"changed")
+        run("verify-published-release.py", "--directory", published, "--attestation", attestation, success=False)
+        (published / "LIVE-PROOF").write_bytes(b"live")
+        (published / "RELEASE-EVIDENCE.json").write_bytes(b"changed")
         run("verify-published-release.py", "--directory", published, "--attestation", attestation, success=False)
 
         candidate = root / "candidate"

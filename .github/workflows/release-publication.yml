@@ -147,9 +147,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           mkdir published
-          gh release download v0.1.0-alpha.1 --repo "$REPOSITORY" --dir published \
-            --pattern '*.zip' --pattern '*.tar.gz' --pattern 'LIVE-PROOF' \
-            --pattern 'LAN-PROOF' --pattern 'PROOF-METADATA.json'
+          gh release download v0.1.0-alpha.1 --repo "$REPOSITORY" --dir published
           python candidate/verify-published-release.py --directory published --attestation review/REVIEWER-ATTESTATION.json
           test "$(gh api "repos/$REPOSITORY/releases/tags/v0.1.0-alpha.1" --jq .prerelease)" = true
           test "$(gh api "repos/$REPOSITORY/releases/tags/v0.1.0-alpha.1" --jq .draft)" = false

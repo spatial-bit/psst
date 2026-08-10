@@ -1,7 +1,7 @@
 # W-504: v0.1.0-alpha.1 signed publication
 
-Status: fail-closed publication implementation candidate; execution remains blocked on W-501
-through W-503, protected-environment configuration, and explicit owner authorization
+Status: fail-closed publication contract verified; execution remains blocked on signed-tag
+candidate evidence, protected-environment configuration, and explicit owner authorization
 
 ## Objective
 
@@ -19,7 +19,7 @@ Publish the already verified immutable assets from a signed annotated version ta
 - GitHub Release is marked prerelease and contains no installer or unsupported-platform claim.
 - Post-publication download hashes match the approved evidence bundle.
   `scripts/verify-published-release.py` performs the fail-closed exact-inventory/hash check after the
-  three GitHub Release archives are downloaded beside the approved reviewer attestation.
+  complete GitHub Release asset set is downloaded beside the approved reviewer attestation.
 
 ## Implementation candidate
 
@@ -36,10 +36,11 @@ authorization text, and a limitations acknowledgement. It then:
 4. validates archive hashes, finalized-note hash, candidate evidence, both final CI runs, protected
    review, and the live Claude/Codex and isolated trusted-LAN bytes retained by a protected workflow
    run whose head is the exact candidate revision;
-5. creates only the fixed GitHub prerelease, then downloads its three archives and runs the retained,
-   attestation-bound exact hash verifier. The sanitized `LIVE-PROOF`, `LAN-PROOF`, and
+5. creates only the fixed GitHub prerelease, then downloads every published asset and runs the
+   retained, attestation-bound exact hash verifier. The sanitized `LIVE-PROOF`, `LAN-PROOF`, and
    `PROOF-METADATA.json` are immutable prerelease assets too, so evidence survives CI retention;
-   post-download verification requires their exact inventory and hashes.
+   post-download verification requires the exact ten-file inventory and validates archives, proofs,
+   checksum bundle, release evidence, reviewer attestation, and retained verifier bytes.
 
 The protected environment must require owner reviewers and enable Prevent self-review. A failure
 after `gh release create` is a release incident: the workflow intentionally has no automatic delete,
