@@ -15,6 +15,11 @@ from pathlib import Path, PurePosixPath
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_MEMBER_BYTES = 256 * 1024 * 1024
 MAX_TOTAL_BYTES = 768 * 1024 * 1024
+TARGET_EXTENSIONS = {
+    "windows-x86_64": ".zip",
+    "linux-x86_64": ".tar.gz",
+    "macos-aarch64": ".tar.gz",
+}
 
 def scan(name: str, data: bytes, canaries: list[str]) -> None:
     for canary in canaries:
@@ -40,6 +45,10 @@ def main() -> None:
     parser.add_argument("--target", required=True)
     parser.add_argument("--forbidden-canary", action="append", default=[])
     args = parser.parse_args()
+    extension = TARGET_EXTENSIONS.get(args.target)
+    expected_name = f"psst-v{args.version}-{args.target}{extension}" if extension else None
+    if expected_name is None or args.archive.name != expected_name:
+        raise SystemExit("release archive name or target is not canonical")
     if not args.archive.is_file() or args.archive.stat().st_size > MAX_ARCHIVE_BYTES:
         raise SystemExit("release archive is missing or exceeds the compressed size bound")
     root = f"psst-v{args.version}-{args.target}"
@@ -50,7 +59,7 @@ def main() -> None:
     modes: dict[str, int] = {}
     seen: set[str] = set()
     total_bytes = 0
-    if args.archive.name.endswith(".zip"):
+    if extension == ".zip":
         with zipfile.ZipFile(args.archive) as archive:
             for member in archive.infolist():
                 name = member.filename.replace("\\", "/")
@@ -118,8 +127,27 @@ def main() -> None:
         if item.get("bytes") != len(data) or item.get("sha256") != hashlib.sha256(data).hexdigest():
             raise SystemExit(f"release manifest hash mismatch: {item['path']}")
     sbom = json.loads(contents["SBOM.spdx.json"])
-    if sbom.get("spdxVersion") != "SPDX-2.3" or sbom.get("name") != f"psst-{args.version}":
+    namespace_hash = hashlib.sha256(f"{args.version}:{args.revision}".encode()).hexdigest()
+    expected_creation = {
+        "created": "1970-01-01T00:00:00Z",
+        "creators": ["Tool: psst-generate-release-sbom"],
+    }
+    packages = sbom.get("packages")
+    if (
+        set(sbom) != {"spdxVersion", "dataLicense", "SPDXID", "name", "documentNamespace", "creationInfo", "packages"}
+        or sbom.get("spdxVersion") != "SPDX-2.3"
+        or sbom.get("dataLicense") != "CC0-1.0"
+        or sbom.get("SPDXID") != "SPDXRef-DOCUMENT"
+        or sbom.get("name") != f"psst-{args.version}"
+        or sbom.get("documentNamespace") != f"https://github.com/spatial-bit/psst/sbom/{namespace_hash}"
+        or sbom.get("creationInfo") != expected_creation
+        or not isinstance(packages, list)
+        or not packages
+    ):
         raise SystemExit("SBOM identity mismatch")
+    package_ids = [item.get("SPDXID") for item in packages if isinstance(item, dict)]
+    if len(package_ids) != len(packages) or any(not value for value in package_ids) or len(set(package_ids)) != len(package_ids):
+        raise SystemExit("SBOM package identity is missing or duplicated")
 
 
 if __name__ == "__main__":
