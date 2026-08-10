@@ -1,6 +1,6 @@
 # W-406: Slice 4 wake-on-mail gate
 
-Status: implementation candidate; native packaged and live-client evidence pending
+Status: verified; merge pending
 
 ## Objective
 
@@ -39,6 +39,20 @@ Prove the packaged first-class Claude and Codex harnesses wake idle agents from 
   claiming that a recent record proves liveness.
 
 Local Windows evidence passes the combined packaged wake rehearsal three consecutive times, strict
-workspace Clippy, the complete workspace suite, workflow lint, and diff checks. Remaining evidence
-is the exact-revision native and clean-download workflow plus final opt-in live-client transcript
-reconciliation.
+workspace Clippy, the complete workspace suite, workflow lint, and diff checks. Exact head
+`676c1c81e4a975eae340bf61b97922ed023b09fb` passed standard CI on Windows, Ubuntu, and macOS in
+[workflow 31415718078](https://github.com/spatial-bit/psst/actions/runs/31415718078), and all three
+native packaged wake builds passed in
+[workflow 31415717960](https://github.com/spatial-bit/psst/actions/runs/31415717960). A separately
+dispatched exact-head run then passed the native build plus checkoutless, no-repository/no-Rust
+Claude and Codex wake rehearsal on Windows x86-64, Linux x86-64, and macOS ARM64 in
+[workflow 31416143545](https://github.com/spatial-bit/psst/actions/runs/31416143545).
+
+The opt-in live Claude Code 2.1.226 transcript recorded in W-403 proves an idle interactive client
+received the body-free Channel wake, autonomously retrieved and explicitly acknowledged the exact
+pending message, and emitted no duplicate wake. The installed Codex 0.147.0 transcript recorded in
+W-404 proves an idle durable thread woke, retrieved and explicitly acknowledged pending mail, then
+resumed the same thread after adapter and relay restart. Together with the exact-head packaged and
+contract gates above, this closes the Slice 4 wake-on-mail acceptance surface. PR #10 remains a
+draft until its final documentation-only evidence head reruns the required checks and receives
+separate merge authorization.
