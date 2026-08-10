@@ -41,6 +41,10 @@ def validate_workflow_contracts() -> None:
     assert "gh release create" not in candidate
     assert "Verify, install, smoke, restart, and uninstall without checkout or Rust commands" in candidate
     assert "alpha-release-evidence-${{ needs.contract.outputs.revision }}" in candidate
+    assert "$checksumLines.Count -ne 1" in candidate
+    assert "$Matches[2] -ne $expectedArchiveName" in candidate
+    assert "acknowledged message remained pending" in candidate
+    assert "$afterAck.data.pending_count -ne 0" in candidate
 
     assert "environment: alpha-release-proof-retention" in proof
     assert "permissions:\n  contents: read" in proof
