@@ -20,7 +20,9 @@ import traceback
 from pathlib import Path
 from urllib.request import urlopen
 
-BODY = "w406-private-wake-body"
+BODY = "w406-private-codex-wake-body"
+CLAUDE_BODY = "w406-private-claude-wake-body"
+CLAUDE_RESTART_BODY = "w406-private-claude-restart-body"
 CANARY = "w406-authorization-canary-must-not-escape"
 ACTIVE: list[subprocess.Popen] = []
 
@@ -87,20 +89,50 @@ class Mcp:
         ACTIVE.append(process)
         self.io = JsonLines(process)
         self.next_id = 1
+        self.notifications: list[dict] = []
         response = self.request("initialize", {
             "protocolVersion": "2025-11-25", "capabilities": {},
             "clientInfo": {"name": "w406-packaged-wake", "version": "0"},
         })
         assert response["result"]["serverInfo"]["name"] == "psst-mcp"
+        self.initialization = response["result"]
         self.io.write({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
     def request(self, method: str, params: dict) -> dict:
         request_id = self.next_id
         self.next_id += 1
         self.io.write({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
-        response = self.io.read()
-        assert response["id"] == request_id, response
-        return response
+        while True:
+            response = self.io.read()
+            if response.get("id") == request_id:
+                return response
+            assert "method" in response and "id" not in response, response
+            self.notifications.append(response)
+
+    def wait_notification(self, method: str, seconds: float = 20) -> dict:
+        for index, value in enumerate(self.notifications):
+            if value.get("method") == method:
+                return self.notifications.pop(index)
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            try:
+                value = self.io.read(max(.05, deadline - time.monotonic()))
+            except queue.Empty:
+                break
+            assert "method" in value and "id" not in value, value
+            if value["method"] == method:
+                return value
+            self.notifications.append(value)
+        raise AssertionError(f"MCP notification did not arrive: {method}")
+
+    def assert_no_notification(self, method: str, seconds: float) -> None:
+        assert not any(value.get("method") == method for value in self.notifications)
+        try:
+            value = self.io.read(seconds)
+        except queue.Empty:
+            return
+        assert value.get("method") != method, f"duplicate MCP notification: {value}"
+        self.notifications.append(value)
 
     def call(self, name: str, arguments: dict) -> dict:
         response = self.request("tools/call", {"name": name, "arguments": arguments})
@@ -267,6 +299,67 @@ def credential_secret(root: Path) -> tuple[Path, str]:
     return records[0], json.loads(records[0].read_text(encoding="utf-8"))["authorization"]
 
 
+def run_claude_channel_gate(
+    mcp_binary: Path,
+    root: Path,
+    origin: str,
+    sender: Mcp,
+) -> tuple[list[str], str]:
+    channel_root = root / "claude"
+    channel_root.mkdir()
+    channel_env = isolated_env(channel_root, origin, "w406-claude")
+    channel_env["PSST_CLAUDE_CHANNEL"] = "enabled"
+    channel = Mcp(mcp_binary, channel_env)
+    assert channel.initialization["capabilities"]["experimental"]["claude/channel"] == {}
+    channel.call("squad_join", {
+        "squad": "w406-wake", "name": "claude", "role": "worker", "mission": None,
+    })
+    credential, secret = credential_secret(channel_root)
+    assert [path for path in channel_root.rglob("*") if path.is_file() and secret.encode() in safe_bytes(path)] == [credential]
+    sent = sender.call("message_send", {
+        "recipient": "claude", "body": CLAUDE_BODY, "priority": "high",
+        "reply_to": None, "correlation_id": "w406-claude-wake",
+    })
+    first_id = sent["message"]["id"]
+    wake = channel.wait_notification("notifications/claude/channel")
+    assert wake["params"]["meta"]["oldest_message_id"] == first_id
+    assert wake["params"]["meta"]["pending_count"] == "1"
+    assert wake["params"]["meta"]["highest_priority"] == "high"
+    assert CLAUDE_BODY not in json.dumps(wake)
+    channel.assert_no_notification("notifications/claude/channel", 2)
+    first = channel.call("message_receive", {
+        "limit": 20, "wait_seconds": 0, "acknowledge_ids": [],
+    })
+    replay = channel.call("message_receive", {
+        "limit": 20, "wait_seconds": 0, "acknowledge_ids": [],
+    })
+    assert first["messages"][0]["id"] == first_id
+    assert replay["messages"][0]["id"] == first_id
+    assert channel.call("message_acknowledge", {"message_ids": [first_id]})["acknowledged_ids"] == [first_id]
+    assert channel.call("message_receive", {
+        "limit": 20, "wait_seconds": 0, "acknowledge_ids": [],
+    })["pending_count"] == 0
+    channel.stop()
+
+    restarted = sender.call("message_send", {
+        "recipient": "claude", "body": CLAUDE_RESTART_BODY, "priority": "normal",
+        "reply_to": None, "correlation_id": "w406-claude-restart",
+    })
+    restart_id = restarted["message"]["id"]
+    channel = Mcp(mcp_binary, channel_env)
+    wake = channel.wait_notification("notifications/claude/channel")
+    assert wake["params"]["meta"]["oldest_message_id"] == restart_id
+    assert CLAUDE_RESTART_BODY not in json.dumps(wake)
+    replayed = channel.call("message_receive", {
+        "limit": 20, "wait_seconds": 0, "acknowledge_ids": [],
+    })
+    assert replayed["messages"][0]["id"] == restart_id
+    assert channel.call("message_acknowledge", {"message_ids": [restart_id]})["acknowledged_ids"] == [restart_id]
+    channel.call("squad_leave", {})
+    channel.stop()
+    return [first_id, restart_id], secret
+
+
 def harness() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--psst", type=Path, required=True)
@@ -304,6 +397,9 @@ def harness() -> None:
         cli(args.psst, receiver_env, "squad", "join", "w406-wake", "--name", "codex", "--role", "worker")
         sender = Mcp(args.psst_mcp.resolve(), sender_env)
         sender.call("squad_join", {"squad": "w406-wake", "name": "sender", "role": "sender", "mission": None})
+        claude_message_ids, claude_secret = run_claude_channel_gate(
+            args.psst_mcp.resolve(), root, origin, sender,
+        )
         receiver_credential, receiver_secret = credential_secret(receiver_root)
         sender_credential, sender_secret = credential_secret(sender_root)
         assert [path for path in receiver_root.rglob("*") if path.is_file() and receiver_secret.encode() in safe_bytes(path)] == [receiver_credential]
@@ -356,18 +452,21 @@ def harness() -> None:
         sender.stop()
         relay.terminate(); relay.wait(10); ACTIVE.remove(relay); relay_handle.close()
         logs = relay_log.read_text(encoding="utf-8", errors="replace")
-        evidence = {"revision": args.revision, "binary_version": version, "wake_turns": 1,
-                    "message_id": proof["message_id"], "pending_after_ack": 0,
+        evidence = {"revision": args.revision, "binary_version": version,
+                    "claude_channel_wakes": 2, "claude_message_ids": claude_message_ids,
+                    "codex_wake_turns": 1, "codex_message_id": proof["message_id"], "pending_after_ack": 0,
                     "codex_stdout": [], "codex_stderr": []}
         encoded = json.dumps(evidence, indent=2)
-        for label, forbidden in (("body", BODY), ("canary", CANARY),
-                                 ("receiver authorization", receiver_secret), ("sender authorization", sender_secret)):
+        for label, forbidden in (("codex body", BODY), ("claude body", CLAUDE_BODY),
+                                 ("claude restart body", CLAUDE_RESTART_BODY), ("canary", CANARY),
+                                 ("receiver authorization", receiver_secret), ("sender authorization", sender_secret),
+                                 ("claude authorization", claude_secret)):
             assert forbidden not in logs and forbidden not in encoded, f"{label} escaped into observable evidence"
-        for profile_root in (receiver_root, sender_root):
+        for profile_root in (receiver_root, sender_root, root / "claude"):
             assert not any(CANARY.encode() in safe_bytes(path) for path in profile_root.rglob("*") if path.is_file())
         if args.evidence:
             args.evidence.write_text(encoded + "\n", encoding="utf-8")
-        print("W-406 packaged Codex wake gate passed: idle wake, real MCP receive+ack, one turn, zero pending, clean shutdown")
+        print("W-406 packaged wake gate passed: Claude wake/replay/ack/restart and Codex idle wake/one turn/ack/clean shutdown")
 
 
 def safe_bytes(path: Path) -> bytes:

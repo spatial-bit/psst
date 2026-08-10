@@ -24,10 +24,12 @@ Prove the packaged first-class Claude and Codex harnesses wake idle agents from 
 - Development artifacts now build and package the native `psst-codex` foreground harness alongside
   `psst`, `psst-mcp`, and `psst-relay`, with exact inventory, executable-mode, version, and canary
   inspection on each supported native target.
-- Native and clean-download jobs now run a repository-independent Codex wake rehearsal against the
-  exact four built/extracted binaries. It starts the harness idle, sends one real relay message,
-  routes dynamic receive and explicit acknowledgement through the real `psst-mcp`, proves one turn
-  and zero pending mail, scans body/credential canaries, and performs targeted clean shutdown. The
+- Native and clean-download jobs now run a repository-independent Claude and Codex wake rehearsal
+  against the exact four built/extracted binaries. The Claude leg proves a body-free Channel wake,
+  replay before explicit acknowledgement, no duplicate notification, and restart reconciliation
+  for mail accepted while stopped. The Codex leg starts idle, sends real relay mail, routes dynamic
+  receive and explicit acknowledgement through the real `psst-mcp`, proves one turn and zero
+  pending mail, and performs targeted clean shutdown. Both legs scan body/credential canaries. The
   existing workspace gate retains the activation contract suites for burst coalescing,
   reconciliation, retry, and no-preemption behavior.
 - Windows `psst-codex` listens for both targeted Ctrl-Break and ordinary Ctrl-C, allowing isolated
@@ -36,7 +38,7 @@ Prove the packaged first-class Claude and Codex harnesses wake idle agents from 
 - The bundled quickstart documents both opt-in wake adapters and passive non-secret status without
   claiming that a recent record proves liveness.
 
-Local Windows evidence passes the packaged wake rehearsal three consecutive times, strict
+Local Windows evidence passes the combined packaged wake rehearsal three consecutive times, strict
 workspace Clippy, the complete workspace suite, workflow lint, and diff checks. Remaining evidence
 is the exact-revision native and clean-download workflow plus final opt-in live-client transcript
 reconciliation.

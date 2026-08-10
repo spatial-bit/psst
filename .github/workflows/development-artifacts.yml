@@ -91,7 +91,7 @@ jobs:
           --psst-relay "${{ matrix.relay }}"
           --revision "${{ github.sha }}"
           --evidence "w309-${{ matrix.target }}-sanitized.json"
-      - name: Native packaged Codex wake gate
+      - name: Native packaged Claude and Codex wake gate
         run: >-
           python scripts/smoke-codex-wake.py
           --psst "${{ matrix.psst }}"
@@ -369,7 +369,7 @@ jobs:
           path: w309-clean-${{ matrix.target }}-sanitized.json
           if-no-files-found: error
           retention-days: 14
-      - name: Run downloaded Codex wake gate without repository or Rust
+      - name: Run downloaded Claude and Codex wake gate without repository or Rust
         shell: pwsh
         run: |
           $root = Resolve-Path 'extracted/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}'

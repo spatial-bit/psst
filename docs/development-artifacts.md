@@ -25,11 +25,13 @@ Archive paths, ordering, timestamps, ownership metadata, and permissions are nor
 the packaging layout predictable; it does not claim the compiler output or archives are
 reproducible. CI rejects extra paths, unsafe members, incorrect executable modes, workspace/secret
 canaries, wrong versions, and incomplete warnings. Native jobs smoke the relay, CLI configuration,
-MCP initialize handshake, and a complete Codex wake cycle: idle before send, real relay mail,
-dynamic receive and explicit acknowledgement through the built `psst-mcp`, one turn, zero pending
-mail, and clean shutdown. Clean-download jobs repeat exact inventory, canary, version, relay, CLI,
-MCP, and wake checks using only the downloaded archive, a separately retained test harness, and
-operating-system tools—no Rust toolchain or repository checkout.
+MCP initialize handshake, and complete Claude and Codex wake cycles. The Claude leg proves a
+body-free Channel wake, replay before explicit acknowledgement, no duplicate wake, and restart
+reconciliation. The Codex leg proves idle-before-send, real relay mail, dynamic receive and
+explicit acknowledgement through the built `psst-mcp`, one turn, zero pending mail, and clean
+shutdown. Clean-download jobs repeat exact inventory, canary, version, relay, CLI, MCP, and wake
+checks using only the downloaded archive, a separately retained test harness, and operating-system
+tools—no Rust toolchain or repository checkout.
 
 ## Download and dogfood
 
