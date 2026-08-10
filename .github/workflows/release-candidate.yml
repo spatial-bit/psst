@@ -158,7 +158,10 @@ jobs:
         shell: pwsh
         run: |
           $archive = Resolve-Path "download/psst-v${{ env.PSST_RELEASE_VERSION }}-${{ matrix.target }}.${{ matrix.extension }}"
-          $expectedHash = ((Get-Content "download/${{ matrix.target }}.SHA256") -split '  ')[0]
+          $expectedArchiveName = "psst-v${{ env.PSST_RELEASE_VERSION }}-${{ matrix.target }}.${{ matrix.extension }}"
+          $checksumLines = @(Get-Content "download/${{ matrix.target }}.SHA256")
+          if ($checksumLines.Count -ne 1 -or $checksumLines[0] -notmatch '^([0-9a-f]{64})  ([A-Za-z0-9._-]+)$' -or $Matches[2] -ne $expectedArchiveName) { throw 'checksum file is not exact or is bound to the wrong archive' }
+          $expectedHash = $Matches[1]
           if ((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant() -ne $expectedHash) { throw 'archive checksum mismatch' }
           python download/inspect-release.py --archive $archive --version "${{ env.PSST_RELEASE_VERSION }}" --revision "${{ needs.contract.outputs.revision }}" --target "${{ matrix.target }}" --forbidden-canary "${{ github.workspace }}" --forbidden-canary "alpha-release-secret-must-not-ship"
           if ($LASTEXITCODE) { throw 'pre-extraction archive inspection failed' }
@@ -208,6 +211,8 @@ jobs:
             $replay = (& $psst --profile bob --json inbox | ConvertFrom-Json).data.messages[0]
             if ($replay.id -ne $first.id) { throw 'unacknowledged message did not replay after restart' }
             & $psst --profile bob message acknowledge $replay.id | Out-Null
+            $afterAck = & $psst --profile bob --json inbox | ConvertFrom-Json
+            if (-not $afterAck.ok -or $afterAck.data.messages.Count -ne 0 -or $afterAck.data.pending_count -ne 0) { throw 'acknowledged message remained pending' }
             $env:PSST_PROFILE = 'alice'
             $start = [Diagnostics.ProcessStartInfo]::new(); $start.FileName = $mcp; $start.UseShellExecute = $false
             $start.RedirectStandardInput = $true; $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true

@@ -1,6 +1,6 @@
 # W-503: v0.1.0-alpha.1 rehearsal and evidence bundle
 
-Status: rehearsal automation implemented; execution and external evidence pending
+Status: checkoutless rehearsal contract hardened; exact-tag execution and external evidence pending
 
 ## Objective
 
@@ -30,6 +30,9 @@ owner-controlled isolated trusted network so CI never exposes an unauthenticated
   manifest verification, portable install, local relay health, two-profile roster/send/replay,
   relay restart, explicit acknowledgement, MCP initialization/stdout purity, uninstall, and user
   data retention on all three supported native runners.
+- Downloaded checksum input is accepted only as one exact lowercase SHA-256 line bound to the
+  canonical target archive name. The messaging rehearsal proves the same unacknowledged message
+  replays after relay restart and that explicit acknowledgement leaves no message or pending count.
 - The workflow also defines a sanitized evidence bundle that binds the tag, revision, workflow run,
   target matrix, hashes, SBOM location, rehearsal, limitations, and explicit external prerequisites.
 - Execution against a signed tag, an owner-controlled isolated trusted-LAN rehearsal, W-309 live
