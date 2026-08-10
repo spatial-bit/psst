@@ -1,6 +1,7 @@
 # W-309: Slice 3 reliability and cooperative dogfood gate
 
-Status: automated native and clean-download gates verified at `a4af73a`; live Claude Code/Codex sessions pending
+Status: automated native and clean-download gates verified at `a4af73a`; operator-directed live
+Claude/Codex rehearsal passed at `ae55f7b`; post-repair Codex lifecycle smoke passed at `30c77d3`
 
 ## Objective
 
@@ -42,7 +43,8 @@ Independently validate the complete cooperative CLI/MCP slice through automated 
   [workflow 31274817025](https://github.com/spatial-bit/psst/actions/runs/31274817025). Standard
   Windows, Ubuntu, and macOS CI passed in
   [workflow 31274551562](https://github.com/spatial-bit/psst/actions/runs/31274551562).
-- Interactive Claude Code and Codex walkthroughs are deliberately not claimed and remain pending.
+- The operator-directed interactive walkthrough and the post-repair Codex-only lifecycle check are
+  recorded below. They are dogfood evidence, not a claim that Psst can launch or wake either client.
 
 ## Operator-directed live rehearsal at `ae55f7b`
 
@@ -56,6 +58,20 @@ Independently validate the complete cooperative CLI/MCP slice through automated 
   caused handshake failures. The repair defers profile ownership until the first protected tool
   call. A real two-process regression proves concurrent MCP initialization, a typed
   `profile_locked` result only on contended use, and successful handoff after the first owner exits.
-- Local repair gates passed: complete workspace tests, strict workspace/all-target/all-feature
-  Clippy with warnings denied, formatting, and diff checks. A fresh packaged artifact and short
-  post-repair operator check remain pending.
+- The lifecycle repair passed complete Windows, Ubuntu, and macOS CI plus native cooperative artifact
+  gates at `30c77d34c510e851f69d1418ff3eacc09b831cd2` in
+  [workflow 31340774319](https://github.com/spatial-bit/psst/actions/runs/31340774319) and
+  [workflow 31340774316](https://github.com/spatial-bit/psst/actions/runs/31340774316).
+
+## Post-repair Codex-only lifecycle smoke at `30c77d3`
+
+- Release binaries were built locally from the exact passing PR revision. An isolated loopback relay,
+  unique squad/profile, and temporary global Codex MCP registration were used; Claude was not involved.
+- An ephemeral Codex CLI `0.147.0` session called `squad_join` and `agent_status` through the real Psst
+  MCP server, then exited without leaving. Both protected calls succeeded for profile
+  `smoke-30c77d3`.
+- A completely fresh ephemeral Codex session used the same registration and profile without calling
+  `squad_join`. `agent_status` resumed the binding, `squad_roster` contained `codex-smoke`, and
+  `squad_leave` returned `left: true`.
+- The temporary MCP registration was removed and the isolated relay was stopped after the pass. This
+  closes the fresh-artifact/post-repair operator check created by the `ae55f7b` rehearsal defect.

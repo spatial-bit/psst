@@ -2,7 +2,7 @@
 
 Current slice: 3 — CLI and cooperative MCP
 Current gate: Slice 3 automated gate verified; live cooperative walkthrough pending
-Last reconciled: 2026-08-08
+Last reconciled: 2026-08-09
 
 ## Verified
 
@@ -57,11 +57,11 @@ Last reconciled: 2026-08-08
 
 - The operator-directed `ae55f7b` live rehearsal passed bidirectional MCP send/replay/explicit-ack,
   linked reply, roster/heartbeat, and Claude restart/resume. It found Codex global-registration
-  profile contention; the local repair now defers ownership until protected tool use and passes the
-  complete workspace suite plus strict lint. Fresh artifact verification remains pending.
-- W-309 live cooperative evidence remains pending: one interactive Claude Code session and one
-  interactive Codex session must use distinct profiles at the exact candidate revision and retain a
-  sanitized, independently approved walkthrough.
+  profile contention; the repair defers ownership until protected tool use.
+- The lifecycle repair at `30c77d34c510e851f69d1418ff3eacc09b831cd2` passed all three standard
+  native CI jobs and all three native cooperative artifact jobs. A post-repair Codex-only smoke then
+  proved real MCP join/status, process exit, fresh-session resume/roster, and clean leave with the
+  exact passing revision. The temporary registration and relay were removed afterward.
 - W-501 through W-503 release-contract, portable-asset, and checkoutless-rehearsal automation are
   implemented as unreleased candidates. A signed authorized tag, native exact-tag candidate run,
   owner-controlled isolated trusted-LAN rehearsal, and independent reviewer attestation remain
