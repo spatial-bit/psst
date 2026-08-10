@@ -13,6 +13,7 @@ on:
       - "scripts/smoke-development-relay.py"
       - "scripts/smoke-development-cooperative.py"
       - "scripts/smoke-cooperative-reliability.py"
+      - "scripts/smoke-codex-wake.py"
       - "scripts/inspect-development-artifact.py"
       - "scripts/extract-development-artifact.py"
       - "docs/development-artifacts.md"
@@ -90,6 +91,15 @@ jobs:
           --psst-relay "${{ matrix.relay }}"
           --revision "${{ github.sha }}"
           --evidence "w309-${{ matrix.target }}-sanitized.json"
+      - name: Native packaged Codex wake gate
+        run: >-
+          python scripts/smoke-codex-wake.py
+          --psst "${{ matrix.psst }}"
+          --psst-mcp "${{ matrix.mcp }}"
+          --psst-codex "${{ matrix.codex }}"
+          --psst-relay "${{ matrix.relay }}"
+          --revision "${{ github.sha }}"
+          --evidence "w406-${{ matrix.target }}-sanitized.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
@@ -98,10 +108,24 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: w406-${{ matrix.target }}-sanitized-evidence
+          path: w406-${{ matrix.target }}-sanitized.json
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name != 'pull_request'
         with:
           name: w309-${{ matrix.target }}-harness
           path: scripts/smoke-cooperative-reliability.py
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.event_name != 'pull_request'
+        with:
+          name: w406-${{ matrix.target }}-harness
+          path: scripts/smoke-codex-wake.py
           if-no-files-found: error
           retention-days: 14
       - name: Verify bundled SQLite dependency boundary
@@ -180,6 +204,10 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: w309-${{ matrix.target }}-harness
+          path: harness
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: w406-${{ matrix.target }}-harness
           path: harness
       - name: Extract downloaded artifact
         shell: pwsh
@@ -339,5 +367,23 @@ jobs:
         with:
           name: w309-clean-${{ matrix.target }}-sanitized-evidence
           path: w309-clean-${{ matrix.target }}-sanitized.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Run downloaded Codex wake gate without repository or Rust
+        shell: pwsh
+        run: |
+          $root = Resolve-Path 'extracted/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}'
+          python harness/smoke-codex-wake.py `
+            --psst (Join-Path $root 'psst${{ matrix.suffix }}') `
+            --psst-mcp (Join-Path $root 'psst-mcp${{ matrix.suffix }}') `
+            --psst-codex (Join-Path $root 'psst-codex${{ matrix.suffix }}') `
+            --psst-relay (Join-Path $root 'psst-relay${{ matrix.suffix }}') `
+            --revision '${{ github.sha }}' `
+            --evidence 'w406-clean-${{ matrix.target }}-sanitized.json'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: w406-clean-${{ matrix.target }}-sanitized-evidence
+          path: w406-clean-${{ matrix.target }}-sanitized.json
           if-no-files-found: error
           retention-days: 14
