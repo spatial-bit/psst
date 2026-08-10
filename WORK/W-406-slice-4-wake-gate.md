@@ -1,6 +1,6 @@
 # W-406: Slice 4 wake-on-mail gate
 
-Status: verified; merge pending
+Status: verified and merged
 
 ## Objective
 
@@ -53,6 +53,11 @@ received the body-free Channel wake, autonomously retrieved and explicitly ackno
 pending message, and emitted no duplicate wake. The installed Codex 0.147.0 transcript recorded in
 W-404 proves an idle durable thread woke, retrieved and explicitly acknowledged pending mail, then
 resumed the same thread after adapter and relay restart. Together with the exact-head packaged and
-contract gates above, this closes the Slice 4 wake-on-mail acceptance surface. PR #10 remains a
-draft until its final documentation-only evidence head reruns the required checks and receives
-separate merge authorization.
+contract gates above, this closes the Slice 4 wake-on-mail acceptance surface. Final PR head
+`fb74979be4d3a94398a3abb4d3e9a9492d3ff6a7` passed all six required checks and merged through PR
+[#10](https://github.com/spatial-bit/psst/pull/10) as
+`3acb321d77c587db17bcfe365cefc9438bb771f1`. The exact merged revision passed standard CI on
+Windows, Ubuntu, and macOS in
+[workflow 31420182253](https://github.com/spatial-bit/psst/actions/runs/31420182253), and all three
+native packaged plus checkoutless/no-repository/no-Rust Claude and Codex wake rehearsals passed in
+[workflow 31420181271](https://github.com/spatial-bit/psst/actions/runs/31420181271).
