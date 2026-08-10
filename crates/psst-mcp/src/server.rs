@@ -1,20 +1,27 @@
-use crate::dispatch::{DispatchState, error_output};
+use crate::{
+    claude_channel::{
+        CHANNEL_CAPABILITY, ClaudeChannelController, channel_enabled_from_environment,
+    },
+    dispatch::{DispatchState, error_output},
+};
 use psst_application::{
     AgentStatusInput, EmptyInput, LocalErrorCode, McpErrorOutput, McpSafeError,
     MessageAcknowledgeInput, MessageReceiveInput, MessageSendInput, SquadDescribeInput,
     SquadJoinInput, ToolContract, tool_contracts,
 };
+use psst_protocol::AgentModeDto;
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
     model::{
-        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
-        ListToolsResult, MetaObject, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
-        ToolAnnotations,
+        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock,
+        ExperimentalCapabilities, Implementation, ListToolsResult, MetaObject,
+        PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool, ToolAnnotations,
     },
-    service::RequestContext,
+    service::{NotificationContext, RequestContext},
 };
 use serde_json::{Map, Value};
 use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 
 #[cfg(test)]
 use tokio::sync::Notify;
@@ -69,36 +76,110 @@ pub const SERVER_INSTRUCTIONS: &str = "Psst exposes cooperative direct-message t
 #[derive(Clone, Debug, Default)]
 pub struct CooperativeServer {
     dispatch: Option<Arc<DispatchState>>,
+    channel_enabled: bool,
+    channel: Arc<Mutex<Option<Arc<ClaudeChannelController>>>>,
+    channel_peer: Arc<RwLock<Option<rmcp::Peer<RoleServer>>>>,
     #[cfg(test)]
     cancellation_probe: Option<Arc<CancellationProbe>>,
 }
 
 impl CooperativeServer {
-    /// Resolves the process-owned profile and starts its cooperative runtime when bound.
+    /// Resolves the process-owned profile and starts its selected cooperative or harnessed runtime.
     ///
     /// # Errors
     /// Returns a stable local code when configuration, profile ownership, or startup fails.
     pub async fn from_environment() -> Result<Self, LocalErrorCode> {
-        Ok(Self {
-            dispatch: Some(DispatchState::from_environment().await?),
+        let channel_enabled = channel_enabled_from_environment()
+            .map_err(|()| LocalErrorCode::InvalidConfiguration)?;
+        let dispatch = DispatchState::from_environment(adapter_mode(channel_enabled)).await?;
+        let server = Self {
+            dispatch: Some(dispatch),
+            channel_enabled,
+            channel: Arc::default(),
+            channel_peer: Arc::default(),
             #[cfg(test)]
             cancellation_probe: None,
-        })
+        };
+        server.ensure_channel_started().await?;
+        Ok(server)
     }
 
     pub(crate) async fn shutdown(&self) -> Result<(), LocalErrorCode> {
+        self.stop_channel().await;
+        self.channel_peer.write().await.take();
         if let Some(dispatch) = &self.dispatch {
             dispatch.shutdown().await.map_err(|failure| failure.0)?;
         }
         Ok(())
     }
+
+    async fn stop_channel(&self) {
+        if let Some(channel) = self.channel.lock().await.take() {
+            channel.shutdown().await;
+        }
+    }
+
+    async fn ensure_channel_started(&self) -> Result<(), LocalErrorCode> {
+        if !self.channel_enabled {
+            return Ok(());
+        }
+        let peer = self.channel_peer.read().await.clone();
+        let mut channel = self.channel.lock().await;
+        if channel.is_some() {
+            return Ok(());
+        }
+        let dispatch = self
+            .dispatch
+            .as_ref()
+            .ok_or(LocalErrorCode::InvalidConfiguration)?;
+        let (runtime, profile, squad) = match dispatch.activation_runtime().await {
+            Ok(active) => active,
+            Err(LocalErrorCode::ProfileUnbound) => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let controller = ClaudeChannelController::start(runtime, profile, squad)
+            .map_err(|_| LocalErrorCode::InvalidConfiguration)?;
+        if let Some(peer) = peer {
+            controller.connected(peer).await;
+        }
+        *channel = Some(controller);
+        Ok(())
+    }
+}
+
+const fn adapter_mode(channel_enabled: bool) -> AgentModeDto {
+    if channel_enabled {
+        AgentModeDto::Harnessed
+    } else {
+        AgentModeDto::Cooperative
+    }
 }
 
 impl ServerHandler for CooperativeServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        let capabilities = if self.channel_enabled {
+            let mut experimental = ExperimentalCapabilities::new();
+            experimental.insert(CHANNEL_CAPABILITY.to_owned(), Map::new());
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_experimental_with(experimental)
+                .build()
+        } else {
+            ServerCapabilities::builder().enable_tools().build()
+        };
+        ServerInfo::new(capabilities)
             .with_server_info(Implementation::new("psst-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(SERVER_INSTRUCTIONS)
+    }
+
+    async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+        if !self.channel_enabled {
+            return;
+        }
+        *self.channel_peer.write().await = Some(context.peer.clone());
+        if let Some(channel) = self.channel.lock().await.as_ref() {
+            channel.connected(context.peer).await;
+        }
     }
 
     async fn list_tools(
@@ -153,6 +234,12 @@ impl ServerHandler for CooperativeServer {
             result.structured_content = Some(structured);
             return Ok(result.into());
         };
+        let is_leave = request.name.as_ref() == "squad_leave";
+        if is_leave {
+            // Stop inbox observation before the terminal profile mutation. A recoverable leave
+            // failure restarts it from relay truth below; an ambiguous leave must stay fenced.
+            self.stop_channel().await;
+        }
         let (structured, text, is_error) =
             match dispatch.call(request.name.as_ref(), arguments).await {
                 Ok((structured, text)) => (structured, text, false),
@@ -161,6 +248,12 @@ impl ServerHandler for CooperativeServer {
                     (structured, text, true)
                 }
             };
+        let should_start_channel = (!is_error && !is_leave) || (is_error && is_leave);
+        if should_start_channel && self.ensure_channel_started().await.is_err() {
+            eprintln!(
+                "psst-mcp: Claude Channel activation could not start after profile binding; restart the configured MCP server after checking the profile and Channel opt-in."
+            );
+        }
         let mut result = if is_error {
             CallToolResult::error(vec![ContentBlock::text(text)])
         } else {
@@ -346,6 +439,27 @@ mod tests {
     };
 
     #[test]
+    fn claude_channel_capability_is_exact_and_opt_in_only() {
+        assert_eq!(adapter_mode(false), AgentModeDto::Cooperative);
+        assert_eq!(adapter_mode(true), AgentModeDto::Harnessed);
+        let cooperative = serde_json::to_value(CooperativeServer::default().get_info()).unwrap();
+        assert!(cooperative["capabilities"].get("experimental").is_none());
+
+        let harnessed = CooperativeServer {
+            channel_enabled: true,
+            ..CooperativeServer::default()
+        };
+        let harnessed = serde_json::to_value(harnessed.get_info()).unwrap();
+        assert_eq!(
+            harnessed["capabilities"]["experimental"][CHANNEL_CAPABILITY],
+            json!({})
+        );
+        let serialized = harnessed["capabilities"]["experimental"].to_string();
+        assert!(!serialized.contains("permission"));
+        assert!(!serialized.contains("authorization"));
+    }
+
+    #[test]
     fn every_tool_validates_closed_arguments_and_runtime_bounds() {
         let valid = [
             (
@@ -433,6 +547,7 @@ mod tests {
         let server = CooperativeServer {
             dispatch: None,
             cancellation_probe: Some(Arc::clone(&probe)),
+            ..CooperativeServer::default()
         };
         let (server_input, mut client_output) = tokio::io::duplex(4096);
         let (client_input, server_output) = tokio::io::duplex(4096);

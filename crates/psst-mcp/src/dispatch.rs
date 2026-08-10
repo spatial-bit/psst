@@ -22,6 +22,7 @@ pub(crate) struct DispatchState {
     client: Arc<Client>,
     profile: String,
     relay_origin: String,
+    mode: AgentModeDto,
     paths: ProfilePaths,
     runtime: RwLock<RuntimeSlot>,
     transition_done: Notify,
@@ -56,7 +57,7 @@ impl std::fmt::Debug for DispatchState {
 pub(crate) struct ToolFailure(pub LocalErrorCode);
 
 impl DispatchState {
-    pub(crate) async fn from_environment() -> Result<Arc<Self>, LocalErrorCode> {
+    pub(crate) async fn from_environment(mode: AgentModeDto) -> Result<Arc<Self>, LocalErrorCode> {
         let platform = PlatformPaths::detect().map_err(|_| LocalErrorCode::InvalidConfiguration)?;
         let environment = std::env::vars_os()
             .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
@@ -102,6 +103,7 @@ impl DispatchState {
             client,
             profile: resolved.profile.value,
             relay_origin: resolved.relay_origin.value,
+            mode,
             paths,
             runtime: RwLock::new(runtime),
             transition_done: Notify::new(),
@@ -192,6 +194,20 @@ impl DispatchState {
         Ok((output, text))
     }
 
+    pub(crate) async fn activation_runtime(
+        &self,
+    ) -> Result<(Arc<SessionRuntime>, String, String), LocalErrorCode> {
+        let runtime = self.active().await.map_err(|failure| failure.0)?;
+        runtime
+            .authority()
+            .await
+            .map_err(|error| map_session_error(&error))?;
+        let binding = load_profile(&self.paths.metadata)
+            .map_err(|error| local_io(&error))?
+            .ok_or(LocalErrorCode::ProfileUnbound)?;
+        Ok((runtime, self.profile.clone(), binding.squad_name))
+    }
+
     async fn join(self: &Arc<Self>, input: SquadJoinInput) -> Result<Value, ToolFailure> {
         {
             let mut slot = self.runtime.write().await;
@@ -222,7 +238,7 @@ impl DispatchState {
             JoinSquadRequest {
                 name: input.name,
                 role: input.role,
-                mode: AgentModeDto::Cooperative,
+                mode: self.mode,
                 client: mcp_metadata(),
                 mission: input.mission,
             },
@@ -455,7 +471,7 @@ impl DispatchState {
             RuntimeSpec {
                 profile: binding.clone(),
                 paths: self.paths.clone(),
-                mode: AgentModeDto::Cooperative,
+                mode: self.mode,
                 client_metadata: mcp_metadata(),
                 shutdown_bound: Duration::from_secs(5),
             },
@@ -723,6 +739,7 @@ mod tests {
             client,
             profile: "owned".into(),
             relay_origin,
+            mode: AgentModeDto::Cooperative,
             paths,
             runtime: RwLock::new(runtime),
             transition_done: Notify::new(),
