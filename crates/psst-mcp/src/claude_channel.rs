@@ -8,17 +8,18 @@ use rmcp::{
     model::{CustomNotification, ServerNotification},
 };
 use serde_json::{Value, json};
-use std::{ffi::OsStr, fmt, sync::Arc, time::Duration};
+use std::{ffi::OsStr, fmt, future::Future, sync::Arc, time::Duration};
 use tokio::{
     sync::{Mutex, RwLock, watch},
     task::JoinHandle,
-    time::Instant,
+    time::{Instant, sleep_until},
 };
 
 pub(crate) const CHANNEL_CAPABILITY: &str = "claude/channel";
 pub(crate) const CHANNEL_NOTIFICATION: &str = "notifications/claude/channel";
 pub(crate) const CHANNEL_ENVIRONMENT: &str = "PSST_CLAUDE_CHANNEL";
 const TURN_RECONCILE_WAIT: u8 = 10;
+const TURN_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_TURN_OCCUPANCY: Duration = Duration::from_secs(5 * 60);
 const DIAGNOSTIC_INTERVAL: Duration = Duration::from_millis(250);
 const CHANNEL_CONTENT: &str = "Psst has durable pending mail. Use message_receive to inspect it; retrieval does not acknowledge. Process the pending work, then explicitly call message_acknowledge for each completed message.";
@@ -185,22 +186,38 @@ impl ActivationTurn for ClaudeChannelTurn {
     fn completed(self: Box<Self>) -> ActivationFuture<'static, Result<(), HostFailure>> {
         Box::pin(async move {
             let deadline = Instant::now() + MAX_TURN_OCCUPANCY;
-            loop {
-                if Instant::now() >= deadline {
-                    return Err(HostFailure::OutcomeUnknown);
-                }
-                let inbox = self
-                    .runtime
+            await_turn_completion(&self.notified_oldest, deadline, || async {
+                self.runtime
                     .inbox(1, TURN_RECONCILE_WAIT)
                     .await
-                    .map_err(|_| HostFailure::OutcomeUnknown)?;
-                if inbox.pending_count == 0
-                    || inbox.oldest_message_id.as_deref() != Some(&self.notified_oldest)
-                {
-                    return Ok(());
-                }
-            }
+                    .map_err(|_| HostFailure::OutcomeUnknown)
+            })
+            .await
         })
+    }
+}
+
+async fn await_turn_completion<Observe, Observed>(
+    notified_oldest: &str,
+    deadline: Instant,
+    mut observe: Observe,
+) -> Result<(), HostFailure>
+where
+    Observe: FnMut() -> Observed,
+    Observed: Future<Output = Result<psst_protocol::InboxResponse, HostFailure>>,
+{
+    loop {
+        if Instant::now() >= deadline {
+            return Err(HostFailure::OutcomeUnknown);
+        }
+        let inbox = observe().await?;
+        if inbox.pending_count == 0 || inbox.oldest_message_id.as_deref() != Some(notified_oldest) {
+            return Ok(());
+        }
+
+        // A long-poll returns immediately while the notified message is still pending. Pace the
+        // authoritative completion checks so an idle model turn cannot become a CPU/network loop.
+        sleep_until((Instant::now() + TURN_RECONCILE_INTERVAL).min(deadline)).await;
     }
 }
 
@@ -244,8 +261,9 @@ fn channel_params(wake: &WakeMetadata) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use psst_protocol::MessagePriorityDto;
+    use psst_protocol::{InboxResponse, MessagePriorityDto};
     use rmcp::{ServerHandler, ServiceExt};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     #[test]
@@ -296,6 +314,40 @@ mod tests {
         for forbidden in ["authorization", "Bearer", "resume_token", "message_body"] {
             assert!(!serialized.contains(forbidden));
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unchanged_pending_turn_is_reconciled_at_a_bounded_cadence() {
+        let observations = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&observations);
+        let task = tokio::spawn(async move {
+            await_turn_completion(
+                "msg_oldest",
+                Instant::now() + Duration::from_secs(5),
+                move || {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                    std::future::ready(Ok(InboxResponse {
+                        messages: Vec::new(),
+                        pending_count: 1,
+                        highest_priority: Some(MessagePriorityDto::Normal),
+                        oldest_message_id: Some("msg_oldest".into()),
+                    }))
+                },
+            )
+            .await
+        });
+
+        tokio::task::yield_now().await;
+        assert_eq!(observations.load(Ordering::SeqCst), 1);
+        tokio::time::advance(TURN_RECONCILE_INTERVAL - Duration::from_millis(1)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(observations.load(Ordering::SeqCst), 1);
+        tokio::time::advance(Duration::from_millis(1)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(observations.load(Ordering::SeqCst), 2);
+
+        task.abort();
+        let _ = task.await;
     }
 
     struct FakeChannelServer {
