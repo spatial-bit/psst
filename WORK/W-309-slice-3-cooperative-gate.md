@@ -1,7 +1,7 @@
 # W-309: Slice 3 reliability and cooperative dogfood gate
 
-Status: automated native and clean-download gates verified at `a4af73a`; operator-directed live
-Claude/Codex rehearsal passed at `ae55f7b`; post-repair Codex lifecycle smoke passed at `30c77d3`
+Status: verified on merged `main` at `5bba7119`; operator-directed live Claude/Codex rehearsal
+passed at `ae55f7b` and the post-repair Codex lifecycle smoke passed at `30c77d3`
 
 ## Objective
 
@@ -75,3 +75,16 @@ Independently validate the complete cooperative CLI/MCP slice through automated 
   `squad_leave` returned `left: true`.
 - The temporary MCP registration was removed and the isolated relay was stopped after the pass. This
   closes the fresh-artifact/post-repair operator check created by the `ae55f7b` rehearsal defect.
+
+## Merged-main verification at `5bba7119`
+
+- PR #3 merged into `main` as `5bba7119aae9fdfacdefd47ce825efb74b5e590a` after every branch
+  check passed. Exact-merge Windows, Ubuntu, and macOS CI passed in
+  [workflow 31343911230](https://github.com/spatial-bit/psst/actions/runs/31343911230).
+- Windows x86-64, Linux x86-64, and macOS ARM64 native cooperative builds, smoke tests, reliability
+  gates, deterministic development packaging, and clean-download rehearsals passed in
+  [workflow 31343911214](https://github.com/spatial-bit/psst/actions/runs/31343911214).
+- The fresh Windows `0.1.0-alpha.1` archive was downloaded, extracted, and re-inspected locally with
+  the repository's exact inventory, metadata, mode, version, and revision verifier. It contains the
+  three expected binaries plus the license, dogfood quickstart, build metadata, and unreleased-build
+  warning.

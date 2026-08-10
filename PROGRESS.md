@@ -62,6 +62,12 @@ Last reconciled: 2026-08-09
   native CI jobs and all three native cooperative artifact jobs. A post-repair Codex-only smoke then
   proved real MCP join/status, process exit, fresh-session resume/roster, and clean leave with the
   exact passing revision. The temporary registration and relay were removed afterward.
+- PR #3 merged the complete Slice 3 candidate into `main` as
+  `5bba7119aae9fdfacdefd47ce825efb74b5e590a`. Exact-merge three-OS CI passed in
+  [workflow 31343911230](https://github.com/spatial-bit/psst/actions/runs/31343911230), and all three
+  native cooperative builds plus clean-download rehearsals passed in
+  [workflow 31343911214](https://github.com/spatial-bit/psst/actions/runs/31343911214). The fresh
+  Windows alpha archive was also downloaded, extracted, and re-inspected locally.
 - W-501 through W-503 release-contract, portable-asset, and checkoutless-rehearsal automation are
   implemented as unreleased candidates. A signed authorized tag, native exact-tag candidate run,
   owner-controlled isolated trusted-LAN rehearsal, and independent reviewer attestation remain
@@ -76,12 +82,9 @@ Last reconciled: 2026-08-09
   `c2e4dad3adf67b271a1b6a03a700711818e81503` passed all three native builds and all three
   checkoutless clean-download rehearsals in
   [workflow 31272964987](https://github.com/spatial-bit/psst/actions/runs/31272964987).
-- W-309's automated reliability gate is independently approved and verified at
-  `a4af73ad800dde8ceff8209768685e0d7cf19809`. Standard Windows/Ubuntu/macOS CI passed in
-  [workflow 31274551562](https://github.com/spatial-bit/psst/actions/runs/31274551562); all three
-  native reliability jobs and all three checkoutless artifact rehearsals passed in
-  [workflow 31274817025](https://github.com/spatial-bit/psst/actions/runs/31274817025). The distinct
-  live Claude Code/Codex walkthrough remains pending and is not implied by this automated evidence.
+- W-309's automated reliability gate, operator-directed Claude/Codex rehearsal, post-repair Codex
+  lifecycle smoke, and exact-merge native/clean-download verification are complete. Psst remains a
+  cooperative tool: this evidence does not claim client launch, scheduling, or wake-on-mail.
 
 ## Gate evidence
 
@@ -92,7 +95,6 @@ Last reconciled: 2026-08-09
 
 ## Next coordinator action
 
-Complete W-309's live Claude Code/Codex walkthrough with distinct profiles at the exact candidate
-revision. The loopback ambiguous-commit CLI proxy remains behind explicit user authorization. Alpha
-tagging also remains blocked on owner-provisioned signing trust, protected-review configuration, an
-isolated trusted-LAN rehearsal, and separate explicit tag/publication authorizations.
+Hand off the merged-main development archives for practical alpha use. The loopback ambiguous-commit
+CLI proxy remains behind explicit user authorization. Formal signed-tag publication remains a
+separate owner-authorized path; Slice 4 client activation and wake-on-mail are not part of this gate.
