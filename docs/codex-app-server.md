@@ -18,8 +18,11 @@ Set the ordinary `PSST_RELAY` and `PSST_PROFILE` values for an already joined pr
 - `PSST_CODEX_THREAD_ID` — the durable thread to resume.
 
 Thread creation is intentionally separate. Omit `PSST_CODEX_THREAD_ID` and set
-`PSST_CODEX_CREATE_THREAD=1` only when you deliberately want a new durable thread. Supplying both,
-neither, an invalid opt-in value, or an invalid thread id fails closed.
+`PSST_CODEX_CREATE_THREAD=1` plus an absolute, nonexistent `PSST_CODEX_THREAD_RECORD` path only when
+you deliberately want a new durable thread. The adapter creates that record without overwriting an
+existing object, writes the new thread ID, and flushes it before beginning observation. On the next
+run, use that value as `PSST_CODEX_THREAD_ID` and omit both creation variables. Supplying both
+policies, neither, an invalid opt-in value, an existing record, or an invalid thread id fails closed.
 
 Run `psst-codex` and stop it with the platform interrupt. Its stdout is unused; fixed local
 diagnostics go to stderr. The Codex child uses the default local stdio transport. WebSocket,

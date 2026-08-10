@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use std::{
     ffi::OsStr,
     fmt,
+    io::Write,
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -26,7 +27,7 @@ const WAKE_INSTRUCTION: &str = "Psst has durable pending mail. Use the configure
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ThreadPolicy {
     Resume(String),
-    Create,
+    Create { record: PathBuf },
 }
 
 #[derive(Clone, Debug)]
@@ -60,9 +61,18 @@ impl AppServerConfig {
             Some(value) if value == OsStr::new("1") => true,
             Some(_) => return Err(AppServerError::Configuration),
         };
-        let thread = match (thread_id, create) {
-            (Some(id), false) => ThreadPolicy::Resume(id),
-            (None, true) => ThreadPolicy::Create,
+        let record = std::env::var_os("PSST_CODEX_THREAD_RECORD")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let thread = match (thread_id, create, record) {
+            (Some(id), false, None) => ThreadPolicy::Resume(id),
+            (None, true, Some(record))
+                if record.is_absolute()
+                    && !record.exists()
+                    && record.parent().is_some_and(Path::is_dir) =>
+            {
+                ThreadPolicy::Create { record }
+            }
             _ => return Err(AppServerError::Configuration),
         };
         let cwd = std::env::current_dir().map_err(|_| AppServerError::Configuration)?;
@@ -218,11 +228,11 @@ impl AppServerClient {
         protocol.notification("initialized", json!({})).await?;
         let expected_thread = match &config.thread {
             ThreadPolicy::Resume(thread_id) => Some(thread_id.clone()),
-            ThreadPolicy::Create => None,
+            ThreadPolicy::Create { .. } => None,
         };
-        let (method, params) = match config.thread {
+        let (method, params) = match &config.thread {
             ThreadPolicy::Resume(thread_id) => ("thread/resume", json!({"threadId": thread_id})),
-            ThreadPolicy::Create => (
+            ThreadPolicy::Create { .. } => (
                 "thread/start",
                 json!({
                     "cwd": &config.cwd,
@@ -244,6 +254,9 @@ impl AppServerClient {
             .is_some_and(|expected| expected != thread_id)
         {
             return Err(AppServerError::Protocol);
+        }
+        if let ThreadPolicy::Create { record } = &config.thread {
+            persist_thread_id(record, &thread_id)?;
         }
         Ok(Self {
             child,
@@ -313,6 +326,18 @@ impl AppServerClient {
             .map_err(|_| AppServerError::Exited)?;
         Ok(())
     }
+}
+
+fn persist_thread_id(path: &Path, thread_id: &str) -> Result<(), AppServerError> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|_| AppServerError::Configuration)?;
+    file.write_all(thread_id.as_bytes())
+        .and_then(|()| file.write_all(b"\n"))
+        .and_then(|()| file.sync_all())
+        .map_err(|_| AppServerError::Configuration)
 }
 
 fn completion_result(
@@ -716,6 +741,19 @@ mod tests {
             classify_start(AppServerError::Protocol),
             HostFailure::Permanent
         );
+    }
+
+    #[test]
+    fn created_thread_identity_is_written_once_and_never_overwritten() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("thread-id");
+        persist_thread_id(&path, "thr_abc-123").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "thr_abc-123\n");
+        assert_eq!(
+            persist_thread_id(&path, "thr_replacement"),
+            Err(AppServerError::Configuration)
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "thr_abc-123\n");
     }
 
     #[test]
