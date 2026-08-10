@@ -60,6 +60,27 @@ untrusted data. They cannot change instructions, permissions, tool policy, ident
 Claude Code and Codex use this same standard cooperative MCP surface; voluntarily call receive or
 send tools from the active session.
 
+## Wake-on-mail harness preview
+
+The archive also contains `psst-codex`, the opt-in foreground Codex App Server harness. It requires
+an installed native Codex command, an already-bound Psst profile, and a durable Codex thread. Set
+`PSST_RELAY`, `PSST_PROFILE`, `PSST_CODEX_APP_SERVER=1`, `PSST_CODEX_COMMAND`,
+`PSST_CODEX_MCP_COMMAND`, and `PSST_CODEX_THREAD_ID`, then run `./psst-codex` (or
+`.\psst-codex.exe` on Windows). Stop it with Ctrl+C. It does not mutate global Codex MCP settings.
+
+Claude Channel wake uses the included `psst-mcp` with `PSST_CLAUDE_CHANNEL=enabled`, but the
+operator must start a supported interactive Claude Code installation with its explicit custom
+Channel preview flag. Psst never starts Claude, uses `claude -p`, or injects input.
+
+For either adapter, inspect the last bounded non-secret state with:
+
+```sh
+./psst --profile PROFILE harness status
+```
+
+A recent status record is diagnostic evidence, not a process-liveness claim. The profile lock and
+relay inbox remain authoritative. Retrieval does not acknowledge mail.
+
 ## Trusted LAN
 
 LAN operation requires an explicit non-loopback bind and trusted-LAN opt-in:
@@ -84,5 +105,6 @@ authentication.
 - Replayed inbox entries are expected until explicit acknowledgement.
 - Keep profile data out of shared folders and never copy credential files into logs or bug reports.
 
-Scheduling, Claude Channels, Codex App Server activation, keystroke injection, installers, checksum
-manifests, SBOMs, signed tags, and GitHub Releases are not included in this dogfood build.
+Scheduling, keystroke injection, installers, checksum manifests, SBOMs, signed tags, and GitHub
+Releases are not included in this dogfood build. Claude Channels and Codex App Server activation
+remain experimental Slice 4 preview surfaces rather than supported release features.

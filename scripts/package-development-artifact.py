@@ -18,6 +18,7 @@ def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--psst", required=True, type=Path)
     parser.add_argument("--psst-mcp", required=True, type=Path)
+    parser.add_argument("--psst-codex", required=True, type=Path)
     parser.add_argument("--psst-relay", required=True, type=Path)
     parser.add_argument("--target", required=True)
     parser.add_argument("--revision", required=True)
@@ -46,7 +47,7 @@ def write_zip(source: Path, archive: Path) -> None:
             relative = path.relative_to(source.parent).as_posix()
             info = zipfile.ZipInfo(relative, FIXED_ZIP_TIME)
             info.compress_type = zipfile.ZIP_DEFLATED
-            mode = 0o755 if path.name.endswith(".exe") or path.name in {"psst", "psst-mcp", "psst-relay"} else 0o644
+            mode = 0o755 if path.name.endswith(".exe") or path.name in {"psst", "psst-mcp", "psst-codex", "psst-relay"} else 0o644
             info.external_attr = (stat.S_IFREG | mode) << 16
             output.writestr(info, path.read_bytes(), compresslevel=9)
 
@@ -65,7 +66,7 @@ def write_tar_gz(source: Path, archive: Path) -> None:
                     info.gname = ""
                     if path.is_dir():
                         info.mode = 0o755
-                    elif path.name in {"psst", "psst-mcp", "psst-relay"}:
+                    elif path.name in {"psst", "psst-mcp", "psst-codex", "psst-relay"}:
                         info.mode = 0o755
                     else:
                         info.mode = 0o644
@@ -81,7 +82,14 @@ def main() -> None:
     validate_label(args.target, "target")
     validate_label(args.revision, "revision")
     validate_label(args.version, "version")
-    required_files = (args.psst, args.psst_mcp, args.psst_relay, args.license, args.quickstart)
+    required_files = (
+        args.psst,
+        args.psst_mcp,
+        args.psst_codex,
+        args.psst_relay,
+        args.license,
+        args.quickstart,
+    )
     if any(not path.is_file() for path in required_files):
         raise FileNotFoundError("binaries, license, and quickstart must be regular files")
 
@@ -99,6 +107,7 @@ def main() -> None:
         for name, source in (
             (f"psst{suffix}", args.psst),
             (f"psst-mcp{suffix}", args.psst_mcp),
+            (f"psst-codex{suffix}", args.psst_codex),
             (f"psst-relay{suffix}", args.psst_relay),
         ):
             installed_binary = root / name

@@ -1,7 +1,8 @@
 # Development artifacts
 
-CI produces native **unreleased dogfood builds** of the Psst CLI, cooperative MCP adapter, and
-transitional relay. They are not releases or production-ready packages.
+CI produces native **unreleased dogfood builds** of the Psst CLI, cooperative MCP adapter, Codex
+App Server wake harness, and transitional relay. They are not releases or production-ready
+packages.
 
 ## Platforms and names
 
@@ -14,7 +15,7 @@ transitional relay. They are not releases or production-ready packages.
 `<version>` is the Cargo package version and `<revision>` is the full Git commit SHA built by
 GitHub Actions. The archive has one same-named root directory containing exactly:
 
-- `psst`, `psst-mcp`, and transitional `psst-relay` (`.exe` on Windows);
+- `psst`, `psst-mcp`, `psst-codex`, and transitional `psst-relay` (`.exe` on Windows);
 - `LICENSE`;
 - `BUILD-INFO.txt`, with artifact name, target label, version, and revision;
 - `DEVELOPMENT-BUILD`, with the unreleased dogfood and trusted-LAN warning;
@@ -24,9 +25,9 @@ Archive paths, ordering, timestamps, ownership metadata, and permissions are nor
 the packaging layout predictable; it does not claim the compiler output or archives are
 reproducible. CI rejects extra paths, unsafe members, incorrect executable modes, workspace/secret
 canaries, wrong versions, and incomplete warnings. Native jobs smoke the relay, CLI configuration,
-and MCP initialize handshake. Clean-download jobs repeat exact inventory, canary, version, relay,
-CLI, and MCP checks using only the downloaded archive and operating-system tools—no Rust toolchain
-or repository checkout.
+MCP initialize handshake, and Codex harness executable contract. Clean-download jobs repeat exact
+inventory, canary, version, relay, CLI, MCP, and harness checks using only the downloaded archive
+and operating-system tools—no Rust toolchain or repository checkout.
 
 ## Download and dogfood
 
@@ -35,15 +36,17 @@ clearly labelled `psst-dogfood-...` artifact. GitHub wraps the retained native a
 download ZIP, so extract that wrapper and then the inner `.zip` or `.tar.gz`. Read
 `DEVELOPMENT-BUILD`, then follow `DOGFOOD-QUICKSTART.md` from the extracted directory.
 
-The supported cooperative surface in this archive is voluntary CLI and standard MCP tool use for
-generic hosts, Claude Code, and Codex. One adapter process owns one selected profile; credentials,
-heartbeat, resume, sender identity, mode, and dedupe identity remain internal. Retrieval is replayed
-until explicit acknowledgement.
+The cooperative surface in this archive includes voluntary CLI and standard MCP tool use for
+generic hosts, Claude Code, and Codex. It also includes the opt-in experimental Claude Channel and
+Codex App Server wake adapters documented in the bundled quickstart. One adapter process owns one
+selected profile; credentials, heartbeat, resume, sender identity, mode, and dedupe identity remain
+internal. Retrieval is replayed until explicit acknowledgement.
 
 The relay has no TLS and must not be exposed to the internet. Non-loopback binding is only for a
 trusted LAN and requires explicit opt-in. Keep credentials in their protected platform profile
 directory and out of logs, shared folders, prompts, and bug reports.
 
-Scheduling, Claude Channels, Codex App Server activation, keystroke injection, installers, formal
-checksum manifests, SBOMs, signed tags, and GitHub Releases are explicitly deferred. These archives
-remain unsigned, short-retention development artifacts with no compatibility or support promise.
+Scheduling, keystroke injection, installers, formal checksum manifests, SBOMs, signed tags, and
+GitHub Releases are explicitly deferred. The wake adapters remain experimental preview surfaces.
+These archives remain unsigned, short-retention development artifacts with no compatibility or
+support promise.
