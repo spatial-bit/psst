@@ -2892,13 +2892,22 @@ mod tests {
         ));
         assert!(!origin_paths.metadata.exists() && !origin_paths.credential.exists());
 
-        let mismatch_paths = ProfilePaths {
-            metadata: temp.path().join("join-identity/profile.json"),
-            credential: temp.path().join("join-identity/credential.json"),
-            lock: temp.path().join("join-identity/runtime.lock"),
-        };
-        assert!(matches!(
-            SessionRuntime::join_and_bind_owned(
+        let mut identity_mismatch_observed = false;
+        let mut identity_mismatch_paths = Vec::new();
+        for attempt in 0..16 {
+            let mismatch_paths = ProfilePaths {
+                metadata: temp
+                    .path()
+                    .join(format!("join-identity-{attempt}/profile.json")),
+                credential: temp
+                    .path()
+                    .join(format!("join-identity-{attempt}/credential.json")),
+                lock: temp
+                    .path()
+                    .join(format!("join-identity-{attempt}/runtime.lock")),
+            };
+            identity_mismatch_paths.push(mismatch_paths.clone());
+            let result = SessionRuntime::join_and_bind_owned(
                 client.clone(),
                 Arc::new(IdentityMismatchTransport {
                     inner: client.clone(),
@@ -2907,7 +2916,7 @@ mod tests {
                 }),
                 UnboundRuntimeSpec {
                     relay_origin: origin.clone(),
-                    profile_name: "join-identity".into(),
+                    profile_name: format!("join-identity-{attempt}"),
                     squad: "join-identity".into(),
                     paths: mismatch_paths.clone(),
                     shutdown_bound: Duration::from_secs(1),
@@ -2924,12 +2933,35 @@ mod tests {
                     mission: Some("identity validation".into()),
                 },
             )
-            .await,
-            Err(SessionError::Relay(ClientError::MalformedResponse {
-                status: 200
-            }))
-        ));
-        assert!(!mismatch_paths.metadata.exists() && !mismatch_paths.credential.exists());
+            .await;
+            match result {
+                Err(SessionError::Local(error))
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::AddrInUse | io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    // The macOS/Windows profile-lock namespace is deliberately bounded and can
+                    // conservatively collide with another parallel test. Select a fresh isolated
+                    // identity; never retry relay traffic or accept a different semantic result.
+                }
+                Err(SessionError::Relay(ClientError::MalformedResponse { status: 200 })) => {
+                    identity_mismatch_observed = true;
+                    break;
+                }
+                Err(error) => panic!("unexpected identity-mismatch result: {error:?}"),
+                Ok(joined) => {
+                    joined.runtime.shutdown().await.unwrap();
+                    panic!("identity-mismatched join was accepted");
+                }
+            }
+        }
+        assert!(identity_mismatch_observed);
+        assert!(
+            identity_mismatch_paths
+                .iter()
+                .all(|paths| !paths.metadata.exists() && !paths.credential.exists())
+        );
         let blocked_parent = temp.path().join("not-a-directory");
         std::fs::write(&blocked_parent, b"x").unwrap();
         let failed_credential = temp.path().join("fault-credential.json");
