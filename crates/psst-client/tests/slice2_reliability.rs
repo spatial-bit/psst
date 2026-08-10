@@ -138,6 +138,11 @@ fn percentile(samples: &mut [Duration], percentile: usize) -> Duration {
 #[allow(clippy::too_many_lines)]
 async fn one_hundred_watchers_wake_without_loss() {
     const WATCHERS: usize = 100;
+    // All waits must remain registered while a slower native runner commits
+    // the full bounded delivery burst. Ten seconds was too close to the
+    // observed Windows scheduling/SQLite envelope and could let the earliest
+    // waiter expire just before its message committed.
+    const LONG_POLL_SECONDS: u8 = 30;
     let fixture = RelayFixture::start().await;
     let config = ClientConfig {
         max_in_flight: 128,
@@ -178,7 +183,10 @@ async fn one_hundred_watchers_wake_without_loss() {
         let started_tx = started_tx.clone();
         waits.push(tokio::spawn(async move {
             started_tx.send(()).await.unwrap();
-            let inbox = client.inbox(1, 10, &session.credential).await.unwrap();
+            let inbox = client
+                .inbox(1, LONG_POLL_SECONDS, &session.credential)
+                .await
+                .unwrap();
             (index, inbox.messages)
         }));
     }
