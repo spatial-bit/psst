@@ -1,6 +1,6 @@
 # W-402: Durable wake observation and activation engine
 
-Status: implementation candidate; native CI pending
+Status: verified
 
 ## Objective
 
@@ -42,6 +42,8 @@ Do not implement Claude or Codex wire protocols.
 - Deterministic tests cover transition legality, burst coalescing, retry/jitter boundaries,
   immediate post-turn reconciliation, canceled long polls, restart recovery from relay truth,
   empty polling, and ambiguous completion.
-- Local candidate gates: focused activation/protocol/store tests pass; strict workspace Clippy with
-  `-D warnings` passes; full workspace all-target/all-feature tests pass. Windows, Ubuntu, macOS,
-  and applicable dogfood checks remain required on the exact PR head before verification/merge.
+- Exact head `cf2b5d94d3808e4ebe7288a2f6c75e84d5fbbdf0` merged through PR
+  [#6](https://github.com/spatial-bit/psst/pull/6). Standard CI passed on Windows, Ubuntu, and
+  macOS in [workflow 31348671818](https://github.com/spatial-bit/psst/actions/runs/31348671818),
+  and all three native dogfood builds passed in
+  [workflow 31348671835](https://github.com/spatial-bit/psst/actions/runs/31348671835).

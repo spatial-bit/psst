@@ -1,6 +1,6 @@
 # W-406: Slice 4 wake-on-mail gate
 
-Status: planned
+Status: verified; merge pending
 
 ## Objective
 
@@ -18,3 +18,41 @@ Prove the packaged first-class Claude and Codex harnesses wake idle agents from 
 - Wake payload/log/capture scans prove no credential or participant message body reaches activation input.
 - Opt-in live Claude Channel and Codex App Server dogfood each show an idle agent activated by mail, processing through Psst tools, and no duplicate/lost work.
 - Documentation states current preview/version/platform constraints and excludes PTY/keystroke injection, remote public exposure, and production support claims.
+
+## Candidate progress
+
+- Development artifacts now build and package the native `psst-codex` foreground harness alongside
+  `psst`, `psst-mcp`, and `psst-relay`, with exact inventory, executable-mode, version, and canary
+  inspection on each supported native target.
+- Native and clean-download jobs now run a repository-independent Claude and Codex wake rehearsal
+  against the exact four built/extracted binaries. The Claude leg proves a body-free Channel wake,
+  replay before explicit acknowledgement, no duplicate notification, and restart reconciliation
+  for mail accepted while stopped. The Codex leg starts idle, sends real relay mail, routes dynamic
+  receive and explicit acknowledgement through the real `psst-mcp`, proves one turn and zero
+  pending mail, and performs targeted clean shutdown. Both legs scan body/credential canaries. The
+  existing workspace gate retains the activation contract suites for burst coalescing,
+  reconciliation, retry, and no-preemption behavior.
+- Windows `psst-codex` listens for both targeted Ctrl-Break and ordinary Ctrl-C, allowing isolated
+  process groups to drain their App Server/MCP child before exiting instead of being terminated
+  abruptly.
+- The bundled quickstart documents both opt-in wake adapters and passive non-secret status without
+  claiming that a recent record proves liveness.
+
+Local Windows evidence passes the combined packaged wake rehearsal three consecutive times, strict
+workspace Clippy, the complete workspace suite, workflow lint, and diff checks. Exact head
+`676c1c81e4a975eae340bf61b97922ed023b09fb` passed standard CI on Windows, Ubuntu, and macOS in
+[workflow 31415718078](https://github.com/spatial-bit/psst/actions/runs/31415718078), and all three
+native packaged wake builds passed in
+[workflow 31415717960](https://github.com/spatial-bit/psst/actions/runs/31415717960). A separately
+dispatched exact-head run then passed the native build plus checkoutless, no-repository/no-Rust
+Claude and Codex wake rehearsal on Windows x86-64, Linux x86-64, and macOS ARM64 in
+[workflow 31416143545](https://github.com/spatial-bit/psst/actions/runs/31416143545).
+
+The opt-in live Claude Code 2.1.226 transcript recorded in W-403 proves an idle interactive client
+received the body-free Channel wake, autonomously retrieved and explicitly acknowledged the exact
+pending message, and emitted no duplicate wake. The installed Codex 0.147.0 transcript recorded in
+W-404 proves an idle durable thread woke, retrieved and explicitly acknowledged pending mail, then
+resumed the same thread after adapter and relay restart. Together with the exact-head packaged and
+contract gates above, this closes the Slice 4 wake-on-mail acceptance surface. PR #10 remains a
+draft until its final documentation-only evidence head reruns the required checks and receives
+separate merge authorization.

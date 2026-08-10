@@ -13,6 +13,7 @@ on:
       - "scripts/smoke-development-relay.py"
       - "scripts/smoke-development-cooperative.py"
       - "scripts/smoke-cooperative-reliability.py"
+      - "scripts/smoke-codex-wake.py"
       - "scripts/inspect-development-artifact.py"
       - "scripts/extract-development-artifact.py"
       - "docs/development-artifacts.md"
@@ -38,6 +39,7 @@ jobs:
             rust_host: x86_64-pc-windows-msvc
             psst: target/release/psst.exe
             mcp: target/release/psst-mcp.exe
+            codex: target/release/psst-codex.exe
             relay: target/release/psst-relay.exe
             format: zip
           - os: ubuntu-latest
@@ -45,6 +47,7 @@ jobs:
             rust_host: x86_64-unknown-linux-gnu
             psst: target/release/psst
             mcp: target/release/psst-mcp
+            codex: target/release/psst-codex
             relay: target/release/psst-relay
             format: tar.gz
           - os: macos-15
@@ -52,6 +55,7 @@ jobs:
             rust_host: aarch64-apple-darwin
             psst: target/release/psst
             mcp: target/release/psst-mcp
+            codex: target/release/psst-codex
             relay: target/release/psst-relay
             format: tar.gz
     runs-on: ${{ matrix.os }}
@@ -70,7 +74,7 @@ jobs:
           PSST_BUILD_REVISION: ${{ github.sha }}
           PSST_W208_SECRET_CANARY: w208-secret-must-not-ship
           RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=.
-        run: cargo build --locked --release --package psst-cli --package psst-mcp --package psst-relay
+        run: cargo build --locked --release --package psst-cli --package psst-mcp --package psst-codex --package psst-relay
       - name: Native relay smoke
         run: python scripts/smoke-development-relay.py --binary "${{ matrix.relay }}"
       - name: Native CLI and MCP smoke
@@ -87,6 +91,15 @@ jobs:
           --psst-relay "${{ matrix.relay }}"
           --revision "${{ github.sha }}"
           --evidence "w309-${{ matrix.target }}-sanitized.json"
+      - name: Native packaged Claude and Codex wake gate
+        run: >-
+          python scripts/smoke-codex-wake.py
+          --psst "${{ matrix.psst }}"
+          --psst-mcp "${{ matrix.mcp }}"
+          --psst-codex "${{ matrix.codex }}"
+          --psst-relay "${{ matrix.relay }}"
+          --revision "${{ github.sha }}"
+          --evidence "w406-${{ matrix.target }}-sanitized.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
@@ -95,10 +108,24 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: w406-${{ matrix.target }}-sanitized-evidence
+          path: w406-${{ matrix.target }}-sanitized.json
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name != 'pull_request'
         with:
           name: w309-${{ matrix.target }}-harness
           path: scripts/smoke-cooperative-reliability.py
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.event_name != 'pull_request'
+        with:
+          name: w406-${{ matrix.target }}-harness
+          path: scripts/smoke-codex-wake.py
           if-no-files-found: error
           retention-days: 14
       - name: Verify bundled SQLite dependency boundary
@@ -117,6 +144,7 @@ jobs:
           python scripts/package-development-artifact.py
           --psst "${{ matrix.psst }}"
           --psst-mcp "${{ matrix.mcp }}"
+          --psst-codex "${{ matrix.codex }}"
           --psst-relay "${{ matrix.relay }}"
           --target "${{ matrix.target }}"
           --revision "${{ github.sha }}"
@@ -135,6 +163,7 @@ jobs:
           --version "${{ env.PSST_PACKAGE_VERSION }}"
           --psst "${{ matrix.psst }}"
           --psst-mcp "${{ matrix.mcp }}"
+          --psst-codex "${{ matrix.codex }}"
           --psst-relay "${{ matrix.relay }}"
           --forbidden-canary "${{ github.workspace }}"
           --forbidden-canary "w208-secret-must-not-ship"
@@ -176,6 +205,10 @@ jobs:
         with:
           name: w309-${{ matrix.target }}-harness
           path: harness
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: w406-${{ matrix.target }}-harness
+          path: harness
       - name: Extract downloaded artifact
         shell: pwsh
         run: |
@@ -203,6 +236,7 @@ jobs:
             "$archiveRoot/LICENSE",
             "$archiveRoot/psst${{ matrix.suffix }}",
             "$archiveRoot/psst-mcp${{ matrix.suffix }}",
+            "$archiveRoot/psst-codex${{ matrix.suffix }}",
             "$archiveRoot/psst-relay${{ matrix.suffix }}"
           ) | Sort-Object
           $normalizedMembers = @($members | ForEach-Object { $_.Replace('\\', '/') }) | Sort-Object
@@ -214,8 +248,9 @@ jobs:
           $root = Resolve-Path 'extracted/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}'
           $psst = Join-Path $root 'psst${{ matrix.suffix }}'
           $mcp = Join-Path $root 'psst-mcp${{ matrix.suffix }}'
+          $codex = Join-Path $root 'psst-codex${{ matrix.suffix }}'
           $binary = Join-Path $root 'psst-relay${{ matrix.suffix }}'
-          $expected = @('BUILD-INFO.txt','DEVELOPMENT-BUILD','DOGFOOD-QUICKSTART.md','LICENSE','psst${{ matrix.suffix }}','psst-mcp${{ matrix.suffix }}','psst-relay${{ matrix.suffix }}') | Sort-Object
+          $expected = @('BUILD-INFO.txt','DEVELOPMENT-BUILD','DOGFOOD-QUICKSTART.md','LICENSE','psst${{ matrix.suffix }}','psst-mcp${{ matrix.suffix }}','psst-codex${{ matrix.suffix }}','psst-relay${{ matrix.suffix }}') | Sort-Object
           $entries = Get-ChildItem -LiteralPath $root -Force -Recurse
           if ($entries | Where-Object { $_.PSIsContainer }) { throw 'archive contains an unexpected nested directory' }
           if ($entries | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) { throw 'archive contains a link or reparse point' }
@@ -227,7 +262,7 @@ jobs:
           if (-not $IsWindows) {
             foreach ($name in $expected) {
               $mode = [IO.File]::GetUnixFileMode((Join-Path $root $name))
-              $executable = $name -in @('psst','psst-mcp','psst-relay')
+              $executable = $name -in @('psst','psst-mcp','psst-codex','psst-relay')
               $expectedMode = if ($executable) { 493 } else { 420 }
               if ([int]$mode -ne $expectedMode) { throw "unexpected mode for ${name}: $mode" }
             }
@@ -236,6 +271,8 @@ jobs:
           if ($version -ne 'psst-relay ${{ env.PSST_PACKAGE_VERSION }} (${{ github.sha }})') { throw "unexpected version: $version" }
           $cliVersion = & $psst --version
           if ($cliVersion -ne 'psst ${{ env.PSST_PACKAGE_VERSION }}') { throw "unexpected CLI version: $cliVersion" }
+          $codexVersion = & $codex --version
+          if ($codexVersion -ne 'psst-codex ${{ env.PSST_PACKAGE_VERSION }}') { throw "unexpected Codex harness version: $codexVersion" }
           $canaries = @('${{ github.workspace }}','w208-secret-must-not-ship')
           foreach ($file in Get-ChildItem -LiteralPath $root -File) {
             $bytes = [IO.File]::ReadAllBytes($file.FullName)
@@ -330,5 +367,23 @@ jobs:
         with:
           name: w309-clean-${{ matrix.target }}-sanitized-evidence
           path: w309-clean-${{ matrix.target }}-sanitized.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Run downloaded Claude and Codex wake gate without repository or Rust
+        shell: pwsh
+        run: |
+          $root = Resolve-Path 'extracted/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}'
+          python harness/smoke-codex-wake.py `
+            --psst (Join-Path $root 'psst${{ matrix.suffix }}') `
+            --psst-mcp (Join-Path $root 'psst-mcp${{ matrix.suffix }}') `
+            --psst-codex (Join-Path $root 'psst-codex${{ matrix.suffix }}') `
+            --psst-relay (Join-Path $root 'psst-relay${{ matrix.suffix }}') `
+            --revision '${{ github.sha }}' `
+            --evidence 'w406-clean-${{ matrix.target }}-sanitized.json'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: w406-clean-${{ matrix.target }}-sanitized-evidence
+          path: w406-clean-${{ matrix.target }}-sanitized.json
           if-no-files-found: error
           retention-days: 14

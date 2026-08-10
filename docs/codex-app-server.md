@@ -33,7 +33,8 @@ existing object, writes the new thread ID, and flushes it before beginning obser
 run, use that value as `PSST_CODEX_THREAD_ID` and omit both creation variables. Supplying both
 policies, neither, an invalid opt-in value, an existing record, or an invalid thread id fails closed.
 
-Run `psst-codex` and stop it with the platform interrupt. Its stdout is unused; fixed local
+Run `psst-codex` and stop it with the platform interrupt. Windows accepts Ctrl-C and targeted
+Ctrl-Break so an isolated process group can drain cleanly. Its stdout is unused; fixed local
 diagnostics go to stderr. The Codex child uses the default local stdio transport. WebSocket,
 `turn/steer`, and `turn/interrupt` are outside this adapter's contract.
 

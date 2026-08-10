@@ -1,8 +1,8 @@
 # Progress
 
 Current slice: 4 — harnessed activation
-Current gate: W-401 activation contracts active
-Last reconciled: 2026-08-09
+Current gate: W-406 packaged wake-on-mail verification
+Last reconciled: 2026-08-10
 
 ## Verified
 
@@ -90,6 +90,18 @@ Last reconciled: 2026-08-09
 - W-309's automated reliability gate, operator-directed Claude/Codex rehearsal, post-repair Codex
   lifecycle smoke, and exact-merge native/clean-download verification are complete. Psst remains a
   cooperative tool: this evidence does not claim client launch, scheduling, or wake-on-mail.
+- W-401 through W-405 are merged and verified. Their exact heads passed standard CI on Windows,
+  Ubuntu, and macOS plus all applicable native dogfood builds. Live Windows evidence proves both
+  the Claude Channel wake path (including the registration fence and explicit acknowledgement)
+  and Codex App Server wake/retrieve/acknowledge with durable thread resumption.
+- W-406 is verified at exact implementation head
+  `676c1c81e4a975eae340bf61b97922ed023b09fb`. Standard three-OS CI passed in
+  [workflow 31415718078](https://github.com/spatial-bit/psst/actions/runs/31415718078), native
+  packaged Claude/Codex wake gates passed in
+  [workflow 31415717960](https://github.com/spatial-bit/psst/actions/runs/31415717960), and the
+  separately dispatched native plus checkoutless/no-Rust three-platform rehearsal passed in
+  [workflow 31416143545](https://github.com/spatial-bit/psst/actions/runs/31416143545). The final
+  documentation-only evidence head still requires its normal PR checks before merge.
 
 ## Gate evidence
 
@@ -100,5 +112,6 @@ Last reconciled: 2026-08-09
 
 ## Next coordinator action
 
-Verify W-401 contracts, then implement W-402's deterministic activation engine and fake host before
-adding either client protocol. Keep the merged alpha usable and main green throughout Slice 4.
+Run PR #10's final documentation-only evidence head through required checks, confirm its exact scope
+and mergeability, then request fresh authorization to mark ready and merge. After merge, verify the
+exact main revision and reconcile any final merged-main evidence before closing the Slice 4 goal.

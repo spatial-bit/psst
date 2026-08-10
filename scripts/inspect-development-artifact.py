@@ -21,6 +21,7 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--version", required=True)
     parser.add_argument("--psst", required=True, type=Path)
     parser.add_argument("--psst-mcp", required=True, type=Path)
+    parser.add_argument("--psst-codex", required=True, type=Path)
     parser.add_argument("--psst-relay", required=True, type=Path)
     parser.add_argument("--forbidden-canary", action="append", default=[])
     return parser.parse_args()
@@ -35,7 +36,12 @@ def main() -> None:
         raise ValueError(f"unsupported target label: {args.target}")
     root = f"psst-dogfood-{args.version}-{args.revision}-{args.target}"
     suffix = ".exe" if args.target.startswith("windows-") else ""
-    binaries = {f"psst{suffix}", f"psst-mcp{suffix}", f"psst-relay{suffix}"}
+    binaries = {
+        f"psst{suffix}",
+        f"psst-mcp{suffix}",
+        f"psst-codex{suffix}",
+        f"psst-relay{suffix}",
+    }
     expected_files = {
         *(f"{root}/{binary}" for binary in binaries),
         f"{root}/LICENSE",
@@ -133,14 +139,18 @@ def main() -> None:
     if any(text not in warning for text in required_warning_text):
         raise RuntimeError("development warning is incomplete")
     cli_version = run_version(args.psst)
+    codex_version = run_version(args.psst_codex)
     relay_version = run_version(args.psst_relay)
     if cli_version != f"psst {args.version}":
         raise RuntimeError(f"CLI version does not match archive metadata: {cli_version!r}")
+    if codex_version != f"psst-codex {args.version}":
+        raise RuntimeError(f"Codex harness version does not match archive metadata: {codex_version!r}")
     if relay_version != f"psst-relay {args.version} ({args.revision})":
         raise RuntimeError(f"relay version does not match archive metadata: {relay_version!r}")
     binary_payloads = {
         "psst": args.psst.read_bytes(),
         "psst-mcp": args.psst_mcp.read_bytes(),
+        "psst-codex": args.psst_codex.read_bytes(),
         "psst-relay": args.psst_relay.read_bytes(),
     }
     for canary in args.forbidden_canary:

@@ -1,6 +1,6 @@
 # W-401: Slice 4 activation contract
 
-Status: active
+Status: verified
 
 ## Objective
 
@@ -34,4 +34,11 @@ Do not launch a client, emit a Channel notification, call App Server, add a publ
 
 ## Verification evidence
 
-Pending implementation and native CI.
+- Contract PR [#5](https://github.com/spatial-bit/psst/pull/5) merged exact head
+  `9f56656fec6b6aa3a24cc6d2ee7b98b4f4d2aaf3` into `main` with the client-neutral state,
+  metadata, ownership, retry, reconciliation, and host-adapter boundaries frozen before either
+  protocol implementation.
+- Standard CI passed on Windows, Ubuntu, and macOS in
+  [workflow 31346210048](https://github.com/spatial-bit/psst/actions/runs/31346210048); all three
+  native development-artifact jobs passed in
+  [workflow 31346210031](https://github.com/spatial-bit/psst/actions/runs/31346210031).
