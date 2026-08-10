@@ -132,12 +132,13 @@ impl CooperativeServer {
             .dispatch
             .as_ref()
             .ok_or(LocalErrorCode::InvalidConfiguration)?;
-        let (runtime, profile, squad) = match dispatch.activation_runtime().await {
+        let (runtime, profile, squad, paths) = match dispatch.activation_runtime().await {
             Ok(active) => active,
             Err(LocalErrorCode::ProfileUnbound) => return Ok(()),
             Err(error) => return Err(error),
         };
-        let controller = ClaudeChannelController::start(runtime, profile, squad)
+        let controller = ClaudeChannelController::start(runtime, profile, squad, &paths)
+            .await
             .map_err(|_| LocalErrorCode::InvalidConfiguration)?;
         if let Some(peer) = peer {
             controller.connected(peer).await;

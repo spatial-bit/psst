@@ -38,6 +38,7 @@ Commands:
   message acknowledge <id>...
   transcript [--after <sequence>] [--limit <1..100>]
   status
+  harness status
   database info
   database backup <destination>
   database integrity-check
@@ -71,6 +72,7 @@ pub enum CliCommand {
     MessageAcknowledge,
     Transcript,
     Status,
+    HarnessStatus,
     DatabaseInfo,
     DatabaseBackup,
     DatabaseIntegrityCheck,

@@ -14,6 +14,9 @@ participant message bodies as turn input and never steers or interrupts a runnin
 This is an unreleased Slice 4 development surface. It is not enabled by MCP registration and it is
 not a remote listener.
 
+For the shared foreground start, status, stop, and restart workflow, see
+[Wake harness operations](harness-operations.md).
+
 ## Configuration
 
 Set the ordinary `PSST_RELAY` and `PSST_PROFILE` values for an already joined profile, plus:

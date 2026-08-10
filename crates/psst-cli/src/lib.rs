@@ -6,7 +6,7 @@ use psst_application::{
     CLI_HELP, CliCommand, CliFailure, CliSuccess, ConfigFlags, ConfigInputs, ConfigResolver,
     CredentialState, LocalErrorCode, PlatformPaths, ResolvedConfig, RuntimeSpec, SessionError,
     SessionHealth, SessionRuntime, UnboundRuntimeSpec, emit_json_failure, emit_json_success,
-    load_profile, map_client_error,
+    harness_status_path, load_harness_status_view, load_profile, map_client_error,
 };
 use psst_client::{Client, ClientConfig};
 use psst_protocol::{
@@ -43,6 +43,7 @@ enum ParsedCommand {
     RelayStart(RelayStartArgs),
     Health,
     ConfigShowEffective,
+    HarnessStatus,
     SquadList,
     SquadCreate {
         squad: String,
@@ -63,6 +64,7 @@ impl ParsedCommand {
             Self::RelayStart(_) => CliCommand::RelayStart,
             Self::Health => CliCommand::Health,
             Self::ConfigShowEffective => CliCommand::ConfigShowEffective,
+            Self::HarnessStatus => CliCommand::HarnessStatus,
             Self::SquadList => CliCommand::SquadList,
             Self::SquadCreate { .. } => CliCommand::SquadCreate,
             Self::SquadDescribe { .. } => CliCommand::SquadDescribe,
@@ -246,6 +248,10 @@ async fn execute(options: &GlobalOptions, command: ParsedCommand) -> Result<Valu
             serde_json::to_value(resolved.view(credential_state(&resolved)))
                 .map_err(|_| LocalErrorCode::Internal)
         }
+        ParsedCommand::HarnessStatus => {
+            let resolved = resolve_config(options, None)?;
+            execute_harness_status(&resolved)
+        }
         ParsedCommand::SquadList => serde_json::to_value(
             client(&resolve_config(options, None)?)?
                 .list_squads()
@@ -274,6 +280,18 @@ async fn execute(options: &GlobalOptions, command: ParsedCommand) -> Result<Valu
             execute_protected(options, command, &arguments).await
         }
     }
+}
+
+fn execute_harness_status(resolved: &ResolvedConfig) -> Result<Value, LocalErrorCode> {
+    let paths = psst_application::ProfilePaths::for_profile(
+        &resolved.paths,
+        &resolved.relay_origin.value,
+        &resolved.profile.value,
+    )
+    .map_err(|_| LocalErrorCode::InvalidConfiguration)?;
+    let path = harness_status_path(&paths).map_err(|_| LocalErrorCode::InvalidConfiguration)?;
+    let record = load_harness_status_view(&path).map_err(|error| input_io(&error))?;
+    to_value(record.ok_or(LocalErrorCode::InvalidSession)?)
 }
 
 struct ProfileSession {
@@ -1073,6 +1091,9 @@ fn parse_command(args: &[OsString], json: bool) -> Result<ParsedCommand, ParseEr
         {
             Ok(ParsedCommand::ConfigShowEffective)
         }
+        "harness" if args.get(1).is_some_and(|value| value == "status") && args.len() == 2 => {
+            Ok(ParsedCommand::HarnessStatus)
+        }
         "squad" if args.get(1).is_some_and(|value| value == "list") && args.len() == 2 => {
             Ok(ParsedCommand::SquadList)
         }
@@ -1226,6 +1247,7 @@ fn deferred_identity(args: &[OsString]) -> Option<CliCommand> {
         ("relay", Some("start")) => Some(CliCommand::RelayStart),
         ("health", _) => Some(CliCommand::Health),
         ("config", Some("show")) => Some(CliCommand::ConfigShowEffective),
+        ("harness", Some("status")) => Some(CliCommand::HarnessStatus),
         ("profile", Some("list")) => Some(CliCommand::ProfileList),
         ("profile", Some("show")) => Some(CliCommand::ProfileShow),
         ("squad", Some("archive")) => Some(CliCommand::SquadArchive),
@@ -1506,6 +1528,44 @@ mod tests {
         assert!(stderr.is_empty());
     }
 
+    #[test]
+    fn harness_status_reads_the_shared_nonsecret_record_without_profile_ownership() {
+        let directory = tempfile::tempdir().unwrap();
+        let platform = PlatformPaths {
+            config_dir: directory.path().join("config"),
+            data_dir: directory.path().join("state"),
+            runtime_dir: directory.path().join("runtime"),
+        };
+        let origin = "http://127.0.0.1:7341";
+        let resolved = ConfigResolver::new(platform.clone())
+            .resolve(&ConfigInputs {
+                flags: ConfigFlags {
+                    relay_origin: Some(origin.into()),
+                    profile: Some("alpha".into()),
+                    config_path: Some(directory.path().join("missing.yaml")),
+                    ..ConfigFlags::default()
+                },
+                environment: BTreeMap::new(),
+            })
+            .unwrap();
+        let paths = ProfilePaths::for_profile(&platform, origin, "alpha").unwrap();
+        write_restricted(
+            &harness_status_path(&paths).unwrap(),
+            br#"{"version":1,"profile":"alpha","adapter":"codex_app_server","phase":"quiet","retry_attempt":0,"pending_count":null,"highest_priority":null,"owner_pid":7,"observed_at":"1970-01-01T00:00:00.000Z"}"#,
+        );
+
+        let value = execute_harness_status(&resolved).unwrap();
+        assert_eq!(value["profile"], "alpha");
+        assert_eq!(value["adapter"], "codex_app_server");
+        assert_eq!(value["phase"], "quiet");
+        assert_eq!(value["freshness"], "stale");
+        assert_eq!(value["pending_count"], Value::Null);
+        let encoded = value.to_string().to_ascii_lowercase();
+        for forbidden in ["authorization", "bearer", "credential", "token", "body"] {
+            assert!(!encoded.contains(forbidden));
+        }
+    }
+
     #[tokio::test]
     async fn missing_metadata_replays_confirmed_leave_and_fails_closed_on_intent() {
         for phase in ["confirmed", "intent"] {
@@ -1637,6 +1697,10 @@ mod tests {
                 "transcript",
             ),
             (&["psst", "--json", "status", "extra"], "status"),
+            (
+                &["psst", "--json", "harness", "status", "extra"],
+                "harness_status",
+            ),
         ];
         for (arguments, command) in cases {
             let (code, stdout, stderr) = invoke(arguments).await;
