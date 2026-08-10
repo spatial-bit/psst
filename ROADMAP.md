@@ -92,4 +92,21 @@ Gate: fake-host contract suites and native packaged rehearsals prove burst coale
 
 ## Slice 5 — Release engineering
 
+Status: active
+
 Native artifacts, checksums, SBOM, install/uninstall documentation, and cross-platform release rehearsal.
+
+Execution order:
+
+```text
+W-501 Alpha release identity and contract
+  -> W-502 Deterministic portable assets
+      -> W-503 Checkoutless rehearsal and evidence bundle
+          -> W-504 Separately authorized signed prerelease publication
+```
+
+Gate: the exact signed-tag revision passes native Windows x86-64, Linux x86-64, and macOS ARM64
+builds; deterministic archive, manifest, checksum, SBOM, secret/path scan, install/uninstall, local
+relay, replay/acknowledgement, restart, and MCP initialization checks pass from downloaded assets
+without a checkout or Rust. Tagging, protected-environment configuration, isolated non-loopback LAN
+operation, attestation, and publication remain explicit owner-controlled boundaries.
