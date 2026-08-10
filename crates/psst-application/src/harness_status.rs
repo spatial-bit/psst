@@ -8,8 +8,6 @@ use serde::{Deserialize, Serialize};
 use std::fs::File;
 #[cfg(windows)]
 use std::fs::OpenOptions;
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
 #[cfg(windows)]
 use std::os::windows::fs::OpenOptionsExt;
 use std::{
