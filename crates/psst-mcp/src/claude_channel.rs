@@ -20,6 +20,7 @@ pub(crate) const CHANNEL_NOTIFICATION: &str = "notifications/claude/channel";
 pub(crate) const CHANNEL_ENVIRONMENT: &str = "PSST_CLAUDE_CHANNEL";
 const TURN_RECONCILE_WAIT: u8 = 10;
 const TURN_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
+const CHANNEL_REGISTRATION_SETTLE: Duration = Duration::from_secs(1);
 const MAX_TURN_OCCUPANCY: Duration = Duration::from_secs(5 * 60);
 const DIAGNOSTIC_INTERVAL: Duration = Duration::from_millis(250);
 const CHANNEL_CONTENT: &str = "Psst has durable pending mail. Use message_receive to inspect it; retrieval does not acknowledge. Process the pending work, then explicitly call message_acknowledge for each completed message.";
@@ -70,7 +71,7 @@ impl ClaudeChannelController {
     }
 
     pub(crate) async fn connected(&self, peer: Peer<RoleServer>) {
-        *self.host.peer.write().await = Some(peer);
+        *self.host.peer.write().await = Some((peer, Instant::now() + CHANNEL_REGISTRATION_SETTLE));
     }
 
     pub(crate) async fn shutdown(&self) {
@@ -122,7 +123,7 @@ async fn monitor_activation(activation: Arc<ActivationRuntime>, mut stop: watch:
 }
 
 struct ClaudeChannelHost {
-    peer: RwLock<Option<Peer<RoleServer>>>,
+    peer: RwLock<Option<(Peer<RoleServer>, Instant)>>,
     runtime: Arc<SessionRuntime>,
 }
 
@@ -132,12 +133,16 @@ impl ActivationHost for ClaudeChannelHost {
         wake: &'a WakeMetadata,
     ) -> ActivationFuture<'a, Result<Box<dyn ActivationTurn>, HostFailure>> {
         Box::pin(async move {
-            let peer = self
+            let (peer, ready_at) = self
                 .peer
                 .read()
                 .await
                 .clone()
                 .ok_or(HostFailure::RetryableBeforeStart)?;
+            // Claude registers its experimental Channel notification handler shortly after the
+            // standard MCP initialized notification. Sending during that client-side setup window
+            // succeeds at the transport layer but can be silently discarded by the client.
+            await_channel_registration(ready_at).await;
             peer.send_notification(channel_notification(wake))
                 .await
                 .map_err(|_| {
@@ -150,6 +155,10 @@ impl ActivationHost for ClaudeChannelHost {
             }) as Box<dyn ActivationTurn>)
         })
     }
+}
+
+async fn await_channel_registration(ready_at: Instant) {
+    sleep_until(ready_at).await;
 }
 
 struct ClaudeChannelTurn {
@@ -266,6 +275,18 @@ mod tests {
                 assert!(!diagnostic.contains(forbidden));
             }
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn first_wake_waits_for_client_channel_registration() {
+        let ready_at = Instant::now() + CHANNEL_REGISTRATION_SETTLE;
+        let wait = tokio::spawn(await_channel_registration(ready_at));
+
+        tokio::time::advance(CHANNEL_REGISTRATION_SETTLE - Duration::from_millis(1)).await;
+        assert!(!wait.is_finished());
+
+        tokio::time::advance(Duration::from_millis(1)).await;
+        wait.await.unwrap();
     }
 
     #[test]

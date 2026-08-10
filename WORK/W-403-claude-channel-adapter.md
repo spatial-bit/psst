@@ -44,6 +44,10 @@ Do not launch `claude -p`, relay permissions, send participant message bodies, o
   most one request per second; the paused-clock regression proves unchanged pending mail cannot
   spin. Silent preview/policy drops therefore become a bounded visible blocked diagnostic rather
   than a notification or polling flood.
+- The first wake is held for a fixed one-second settle interval after Claude's standard MCP
+  initialization notification. A paused-clock regression proves the transport cannot emit during
+  that client-side Channel registration window; this closes a live startup race where transport
+  success preceded Claude's handler registration and the pending wake was silently lost.
 - The in-memory fake-Claude transcript proves the exact SDK notification method and parameters.
   A real relay/two-process test proves pending mail emits one body-free wake, retrieval replays
   without acknowledgement, explicit acknowledgement clears it, roster mode is `harnessed`, clean
@@ -51,7 +55,7 @@ Do not launch `claude -p`, relay permissions, send participant message bodies, o
 - Operator documentation makes the development-channel flag and organization policy explicitly
   operator-owned, states that transport write is not model processing, and forbids permission
   relay, `claude -p`, client launch, network listeners, and implicit acknowledgement.
-- Local focused gates: all `psst-mcp` targets pass (11 unit tests, 2 real-relay process tests, and 4
+- Local focused gates: all `psst-mcp` targets pass (13 unit tests, 2 real-relay process tests, and 4
   stdio protocol tests); strict package Clippy with all targets/features and `-D warnings` passes;
   formatting passes. Full workspace gates, Windows/Ubuntu/macOS CI, applicable dogfood checks, and
   an opt-in real Claude Code Channel session remain required on the exact PR head before merge.
