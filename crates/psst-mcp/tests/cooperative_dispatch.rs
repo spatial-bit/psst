@@ -2,19 +2,22 @@ use psst_client::{Client, ClientConfig};
 use psst_protocol::CreateSquadRequest;
 use serde_json::{Value, json};
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     net::{Ipv4Addr, SocketAddr, TcpListener},
     path::Path,
     process::{Child, ChildStdin, Command, Stdio},
-    sync::mpsc,
+    sync::{Arc, LazyLock, Mutex as StdMutex, mpsc},
     thread,
     time::Duration,
 };
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{Mutex, oneshot, watch};
+
+static CHILD_SERIAL: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[allow(clippy::too_many_lines)] // One ordered two-process transcript preserves causal evidence.
 async fn two_child_stdio_adapters_replay_ack_reconnect_and_preserve_untrusted_content() {
+    let _serial = serial_child_process_test().await;
     let temp = tempfile::tempdir().unwrap();
     let address = reserve_address();
     let origin = format!("http://{address}");
@@ -168,6 +171,7 @@ async fn two_child_stdio_adapters_replay_ack_reconnect_and_preserve_untrusted_co
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[allow(clippy::too_many_lines)] // One ordered restart transcript preserves wake/ack causality.
 async fn pending_mail_emits_one_body_free_claude_channel_wake_until_acknowledged() {
+    let _serial = serial_child_process_test().await;
     let temp = tempfile::tempdir().unwrap();
     let address = reserve_address();
     let origin = format!("http://{address}");
@@ -296,10 +300,13 @@ async fn pending_mail_emits_one_body_free_claude_channel_wake_until_acknowledged
 }
 
 struct McpChild {
+    profile: String,
     child: Option<Child>,
     stdin: Option<ChildStdin>,
     lines: mpsc::Receiver<String>,
     reader: Option<thread::JoinHandle<()>>,
+    stderr: Arc<StdMutex<Vec<u8>>>,
+    stderr_reader: Option<thread::JoinHandle<()>>,
     next_id: u64,
 }
 
@@ -334,17 +341,35 @@ impl McpChild {
         let mut child = command.spawn().unwrap();
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
+        let mut child_stderr = child.stderr.take().unwrap();
         let (sender, lines) = mpsc::channel();
         let reader = thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
                 sender.send(line.unwrap()).ok();
             }
         });
+        let stderr = Arc::new(StdMutex::new(Vec::new()));
+        let stderr_capture = Arc::clone(&stderr);
+        let stderr_reader = thread::spawn(move || {
+            let mut chunk = [0_u8; 1024];
+            while let Ok(count) = child_stderr.read(&mut chunk) {
+                if count == 0 {
+                    break;
+                }
+                stderr_capture
+                    .lock()
+                    .unwrap()
+                    .extend_from_slice(&chunk[..count]);
+            }
+        });
         Self {
+            profile: profile.to_owned(),
             child: Some(child),
             stdin: Some(stdin),
             lines,
             reader: Some(reader),
+            stderr,
+            stderr_reader: Some(stderr_reader),
             next_id: 1,
         }
     }
@@ -389,7 +414,14 @@ impl McpChild {
         let line = self
             .lines
             .recv_timeout(Duration::from_secs(15))
-            .expect("MCP response timed out");
+            .unwrap_or_else(|error| {
+                let stderr = self.stderr.lock().unwrap();
+                panic!(
+                    "MCP response unavailable for profile {} ({error:?}); child stderr: {}",
+                    self.profile,
+                    String::from_utf8_lossy(&stderr)
+                );
+            });
         serde_json::from_str(&line).unwrap()
     }
 
@@ -433,7 +465,10 @@ impl McpChild {
             thread::sleep(Duration::from_millis(20));
         }
         self.reader.take().unwrap().join().unwrap();
-        child.wait_with_output().unwrap()
+        self.stderr_reader.take().unwrap().join().unwrap();
+        let mut output = child.wait_with_output().unwrap();
+        output.stderr.clone_from(&self.stderr.lock().unwrap());
+        output
     }
 }
 
@@ -444,6 +479,9 @@ impl Drop for McpChild {
             child.wait().ok();
         }
         if let Some(reader) = self.reader.take() {
+            reader.join().ok();
+        }
+        if let Some(reader) = self.stderr_reader.take() {
             reader.join().ok();
         }
     }
@@ -463,6 +501,13 @@ fn reserve_address() -> SocketAddr {
     let address = listener.local_addr().unwrap();
     drop(listener);
     address
+}
+
+async fn serial_child_process_test() -> tokio::sync::MutexGuard<'static, ()> {
+    // Profile ownership uses a deliberately bounded OS endpoint namespace. Running these
+    // multi-child journeys concurrently can conservatively collide unrelated temporary profiles,
+    // especially on Windows. Serialization preserves the intended protocol boundary.
+    CHILD_SERIAL.lock().await
 }
 
 fn credential_authorization(root: &Path) -> String {
