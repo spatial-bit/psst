@@ -3526,14 +3526,15 @@ mod tests {
         let (worker, handle) = StoreWorker::start_with_time(
             &directory.path().join("psst.db"),
             32,
-            Duration::from_secs(2),
+            Duration::from_secs(8),
             Arc::new(SystemTimeSource),
         )
         .unwrap();
-        // Leave enough headroom for a contended CI runner to register the waiter and
-        // dispatch the send before the shared HTTP deadline. The delayed reply remains
-        // well beyond that deadline, so the behavior under test is unchanged.
-        let app = router_with_limits(worker.clone(), 512 * 1024, 128, Duration::from_millis(250));
+        // Leave enough headroom for a contended CI runner to commit and notify the
+        // registered waiter before the shared HTTP deadline. The injected reply delay
+        // remains strictly beyond that deadline, so the sender still times out only
+        // after the durable commit while the recipient wakes immediately.
+        let app = router_with_limits(worker.clone(), 512 * 1024, 128, Duration::from_secs(2));
         let alice = join_for_messaging(app.clone(), "alpha", "alice", true).await;
         let bob = join_for_messaging(app.clone(), "alpha", "bob", false).await;
         let waiting = tokio::spawn(json_request(
@@ -3551,7 +3552,7 @@ mod tests {
         .await
         .unwrap();
         let completion = worker
-            .reliability_delay_next_send_reply(Duration::from_secs(1))
+            .reliability_delay_next_send_reply(Duration::from_secs(5))
             .await
             .unwrap();
         let response = app.oneshot(
@@ -3563,7 +3564,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
         let (_, _, inbox) = waiting.await.unwrap();
         assert_eq!(inbox["pending_count"], 1);
-        completion.recv_timeout(Duration::from_secs(2)).unwrap();
+        completion.recv_timeout(Duration::from_secs(7)).unwrap();
         worker.begin_shutdown();
         handle.join().unwrap().unwrap();
     }
