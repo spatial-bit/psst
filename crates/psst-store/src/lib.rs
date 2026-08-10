@@ -31,6 +31,7 @@ pub use repository::{
 
 const APPLICATION_ID: i32 = 0x5053_5354; // "PSST"
 const BUSY_TIMEOUT: Duration = Duration::from_millis(2_000);
+const OPEN_BUSY_TIMEOUT: Duration = Duration::from_secs(8);
 const JOURNAL_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 const WAL_AUTOCHECKPOINT_PAGES: i64 = 256;
 
@@ -150,10 +151,14 @@ impl Store {
         // read. A competing opener can already hold the fresh database's
         // pre-WAL migration lock, and application-id verification must join the
         // same bounded serialization policy rather than fail immediately.
-        connection.busy_timeout(BUSY_TIMEOUT)?;
+        // Opening includes one-time WAL and migration transitions that serialize every concurrent
+        // process. Give that bounded startup queue enough room on a loaded native runner, then
+        // restore the shorter per-operation policy before publishing the Store.
+        connection.busy_timeout(OPEN_BUSY_TIMEOUT)?;
         verify_application_id(&connection)?;
-        configure_connection(&connection)?;
+        configure_connection(&connection, OPEN_BUSY_TIMEOUT)?;
         migrate(&mut connection, migrations)?;
+        connection.busy_timeout(BUSY_TIMEOUT)?;
         Ok(Self { connection })
     }
 
@@ -205,9 +210,12 @@ impl Store {
     }
 }
 
-fn configure_connection(connection: &Connection) -> Result<(), StoreError> {
+fn configure_connection(
+    connection: &Connection,
+    open_busy_timeout: Duration,
+) -> Result<(), StoreError> {
     connection.pragma_update(None, "foreign_keys", true)?;
-    enable_wal_with_bounded_retry(connection)?;
+    enable_wal_with_bounded_retry(connection, open_busy_timeout)?;
     // FULL is intentional: accepted writes must survive an OS crash, not merely a process crash.
     connection.pragma_update(None, "synchronous", "FULL")?;
     // Keep automatic checkpoints small enough that a checkpoint cannot build a deep
@@ -229,11 +237,14 @@ fn verify_application_id(connection: &Connection) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn enable_wal_with_bounded_retry(connection: &Connection) -> Result<(), StoreError> {
+fn enable_wal_with_bounded_retry(
+    connection: &Connection,
+    open_busy_timeout: Duration,
+) -> Result<(), StoreError> {
     // SQLite can return BUSY immediately when two fresh connections race to change
     // journal mode, even with a busy handler. Retry only that transition and only
-    // within the same documented two-second bound.
-    let deadline = std::time::Instant::now() + BUSY_TIMEOUT;
+    // within the same documented startup bound.
+    let deadline = std::time::Instant::now() + open_busy_timeout;
     loop {
         match connection.pragma_update(None, "journal_mode", "WAL") {
             Ok(()) => return Ok(()),
