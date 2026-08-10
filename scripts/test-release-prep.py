@@ -18,6 +18,61 @@ from pathlib import Path
 SCRIPTS = Path(__file__).parent
 
 
+def workflow(name: str) -> str:
+    return (SCRIPTS.parent / ".github" / "workflows" / name).read_text(encoding="utf-8")
+
+
+def validate_workflow_contracts() -> None:
+    candidate = workflow("release-candidate.yml")
+    proof = workflow("release-proof-retention.yml")
+    attestation = workflow("release-attestation.yml")
+    publication = workflow("release-publication.yml")
+
+    assert 'tags: ["v0.1.0-alpha.1"]' in candidate
+    assert "permissions:\n  contents: read" in candidate
+    assert "contents: write" not in candidate
+    assert "--verify-signed-tag" in candidate
+    assert "PSST_RELEASE_SIGNER_PUBLIC_KEY" in candidate
+    assert "PSST_RELEASE_SIGNER_FINGERPRINT" in candidate
+    for target in ("windows-x86_64", "linux-x86_64", "macos-aarch64"):
+        assert f"target: {target}" in candidate
+    assert "cargo build --locked --release --package psst-cli --package psst-mcp --package psst-relay" in candidate
+    assert "psst-codex" not in candidate
+    assert "gh release create" not in candidate
+    assert "Verify, install, smoke, restart, and uninstall without checkout or Rust commands" in candidate
+    assert "alpha-release-evidence-${{ needs.contract.outputs.revision }}" in candidate
+
+    assert "environment: alpha-release-proof-retention" in proof
+    assert "permissions:\n  contents: read" in proof
+    assert "contents: write" not in proof
+    assert "python scripts/retain-release-proofs.py" in proof
+    assert "WORKFLOW_REVISION: ${{ github.sha }}" in proof
+
+    assert "environment: alpha-release-review" in attestation
+    assert "permissions:\n  actions: read\n  contents: read" in attestation
+    assert "contents: write" not in attestation
+    for path in (
+        ".github/workflows/release-candidate.yml",
+        ".github/workflows/development-artifacts.yml",
+        ".github/workflows/ci.yml",
+        ".github/workflows/release-proof-retention.yml",
+    ):
+        assert path in attestation
+    assert "REVIEWER-ATTESTATION.json" in attestation
+
+    assert "permissions: {}" in publication
+    assert publication.count("contents: write") == 1
+    assert "environment: alpha-release-publish" in publication
+    assert "cargo build" not in publication
+    assert "gh release create v0.1.0-alpha.1" in publication
+    assert "--prerelease" in publication
+    assert "verify-published-release.py" in publication
+
+    for read_only_workflow in (candidate, proof, attestation):
+        assert "git tag" not in read_only_workflow
+        assert "gh release create" not in read_only_workflow
+
+
 def run(script: str, *arguments: object, success: bool = True) -> subprocess.CompletedProcess[str]:
     result = subprocess.run([sys.executable, str(SCRIPTS / script), *map(str, arguments)], text=True, capture_output=True)
     assert (result.returncode == 0) is success, result.stderr
@@ -25,6 +80,8 @@ def run(script: str, *arguments: object, success: bool = True) -> subprocess.Com
 
 
 def main() -> None:
+    validate_workflow_contracts()
+
     spec = importlib.util.spec_from_file_location("release_version", SCRIPTS / "check-release-version.py")
     assert spec is not None and spec.loader is not None
     release_version = importlib.util.module_from_spec(spec)
@@ -243,16 +300,10 @@ def main() -> None:
             result = subprocess.run([sys.executable, str(SCRIPTS / "retain-release-proofs.py")], env=proof_environment, text=True, capture_output=True)
             assert result.returncode != 0, f"credential key was retained: {key}"
 
-    publication_workflow = (SCRIPTS.parent / ".github/workflows/release-publication.yml").read_text(encoding="utf-8")
-    assert "permissions: {}" in publication_workflow
-    assert publication_workflow.count("contents: write") == 1
-    assert "environment: alpha-release-publish" in publication_workflow
-    assert "cargo build" not in publication_workflow
-    assert "gh release create v0.1.0-alpha.1" in publication_workflow
+    publication_workflow = workflow("release-publication.yml")
     assert "review/reviewed-proofs/LIVE-PROOF" in publication_workflow
     assert "review/reviewed-proofs/LAN-PROOF" in publication_workflow
     assert "review/reviewed-proofs/PROOF-METADATA.json" in publication_workflow
-    assert "--prerelease" in publication_workflow
 
 
 if __name__ == "__main__":

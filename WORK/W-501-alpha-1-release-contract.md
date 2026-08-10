@@ -1,6 +1,6 @@
 # W-501: v0.1.0-alpha.1 release contract
 
-Status: contract candidate implemented; signed tag and candidate CI pending
+Status: pre-tag contract verified; signed tag and candidate CI remain owner-gated
 
 ## Objective
 
@@ -28,8 +28,12 @@ claiming deferred Slice 4 activation or unsupported platforms.
   signer fingerprints.
 - Focused release-preparation tests exercise semantic-version parsing, deterministic packaging,
   manifest/inventory inspection, checksum collision rejection, SBOM stability, and published-asset
-  verification. Standard CI is configured to run these tests before any tag exists; the new CI step
-  still requires its first branch run.
+  verification. Standard CI run `31423779827` passed the pre-tag release-preparation gate on
+  Windows, Ubuntu, and macOS at main revision `3268874fd48ef57b584502c9830a02cdc885fc3b`.
+- The Slice 5 foundation hardens that gate with static assertions over the candidate, proof,
+  attestation, and publication workflow boundaries: release scope stays cooperative-only,
+  read-only stages cannot tag or publish, and only the protected publication workflow may request
+  `contents: write`.
 - The signed tag, authorized signer trust root, exact-tag native candidate workflow, W-309 live
   walkthrough, isolated trusted-LAN rehearsal, reviewer attestation, and publication remain pending.
   No tag or GitHub Release is claimed here.

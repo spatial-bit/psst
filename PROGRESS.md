@@ -1,7 +1,7 @@
 # Progress
 
-Current slice: 4 — harnessed activation (verified)
-Current gate: Slice 4 complete; Slice 5 not started
+Current slice: 5 — release engineering
+Current gate: W-501 alpha release identity and workflow contract
 Last reconciled: 2026-08-10
 
 ## Verified
@@ -113,6 +113,7 @@ Last reconciled: 2026-08-10
 
 ## Next coordinator action
 
-Close the Slice 4 goal after this evidence-only reconciliation merges, then define the Slice 5
-release-engineering goal and its bounded standing merge authorization. Tagging, prerelease
-publication, signer configuration, and public exposure remain separate explicit-authority actions.
+Freeze and verify W-501's pre-tag release identity and workflow safety contracts on all three
+standard CI platforms. Continue through deterministic assets and checkoutless rehearsal without
+creating a tag or publishing. Signer configuration, protected environments, isolated non-loopback
+LAN operation, attestation, and publication remain separate explicit-authority actions.
