@@ -13,6 +13,9 @@ completed messages with `message_acknowledge`.
 - Channel mode is off unless the MCP child has `PSST_CLAUDE_CHANNEL=enabled`. The only other
   accepted opt-in values are `1` and `true`; every other value fails startup closed.
 - The initialization response advertises `experimental.claude/channel` only after that opt-in.
+- The first wake waits through a fixed one-second client-registration settle window after MCP
+  initialization. This prevents Claude's experimental Channel handler setup from racing and
+  silently dropping already-pending mail while preserving the durable inbox as authority.
 - Psst sends `notifications/claude/channel` with fixed instructions and bounded metadata:
   profile, squad, pending count, aggregate highest priority, and oldest pending message ID.
 - Participant message bodies, sender-controlled routing fields, credentials, authorization values,
