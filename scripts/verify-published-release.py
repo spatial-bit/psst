@@ -25,9 +25,10 @@ def main() -> None:
         expected[name] = digest
     required_archives = {"psst-v0.1.0-alpha.1-windows-x86_64.zip", "psst-v0.1.0-alpha.1-linux-x86_64.tar.gz", "psst-v0.1.0-alpha.1-macos-aarch64.tar.gz"}
     required_proofs = {"LIVE-PROOF", "LAN-PROOF", "PROOF-METADATA.json"}
+    required_support = {"SHA256SUMS", "RELEASE-EVIDENCE.json", "REVIEWER-ATTESTATION.json", "verify-published-release.py"}
     files = {path.name: path for path in args.directory.iterdir() if path.is_file()}
-    if set(expected) != required_archives or set(files) != required_archives | required_proofs:
-        raise SystemExit("published archive/proof inventory differs from approved alpha assets")
+    if set(expected) != required_archives or set(files) != required_archives | required_proofs | required_support:
+        raise SystemExit("published release inventory differs from approved alpha assets")
     for name in required_archives:
         path = files[name]
         if hashlib.sha256(path.read_bytes()).hexdigest() != expected[name]:
@@ -40,6 +41,16 @@ def main() -> None:
     for name, expected_hash in proof_hashes.items():
         if not isinstance(expected_hash, str) or len(expected_hash) != 64 or hashlib.sha256(files[name].read_bytes()).hexdigest() != expected_hash:
             raise SystemExit(f"published proof hash mismatch: {name}")
+    support_hashes = {
+        "SHA256SUMS": attestation.get("sha256sums_sha256"),
+        "RELEASE-EVIDENCE.json": attestation.get("release_evidence_sha256"),
+        "verify-published-release.py": attestation.get("post_download_verifier_sha256"),
+    }
+    for name, expected_hash in support_hashes.items():
+        if not isinstance(expected_hash, str) or len(expected_hash) != 64 or hashlib.sha256(files[name].read_bytes()).hexdigest() != expected_hash:
+            raise SystemExit(f"published support-file hash mismatch: {name}")
+    if files["REVIEWER-ATTESTATION.json"].read_bytes() != args.attestation.read_bytes():
+        raise SystemExit("published reviewer attestation differs from the approved bytes")
 
 
 if __name__ == "__main__":
