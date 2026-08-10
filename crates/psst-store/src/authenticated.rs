@@ -43,6 +43,8 @@ pub struct SendOutcome {
 pub struct InboxPage {
     pub messages: Vec<MessageView>,
     pub pending_count: u64,
+    pub highest_priority: Option<MessagePriority>,
+    pub oldest_message_id: Option<MessageId>,
     /// Authenticated recipient identity used by the relay for local wake routing.
     /// This metadata is never serialized on the wire.
     pub recipient_membership: MembershipId,
@@ -645,6 +647,33 @@ impl Store {
             [identity.membership.as_str()],
             |row| row.get::<_, u64>(0),
         )?;
+        let highest_priority = tx
+            .query_row(
+                "SELECT priority FROM messages
+                 WHERE recipient_membership_id = ?1 AND acknowledged_at IS NULL
+                 ORDER BY CASE priority WHEN 'high' THEN 1 ELSE 0 END DESC
+                 LIMIT 1",
+                [identity.membership.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(|value| match value.as_str() {
+                "normal" => Ok(MessagePriority::Normal),
+                "high" => Ok(MessagePriority::High),
+                _ => Err(RepositoryError::InvalidStoredData),
+            })
+            .transpose()?;
+        let oldest_message_id = tx
+            .query_row(
+                "SELECT id FROM messages
+                 WHERE recipient_membership_id = ?1 AND acknowledged_at IS NULL
+                 ORDER BY sequence ASC LIMIT 1",
+                [identity.membership.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(|value| MessageId::new(value).map_err(|_| RepositoryError::InvalidStoredData))
+            .transpose()?;
         let records = pending_inbox_on(
             &tx,
             &InboxQuery {
@@ -660,6 +689,8 @@ impl Store {
         Ok(InboxPage {
             messages,
             pending_count,
+            highest_priority,
+            oldest_message_id,
             recipient_membership: identity.membership,
         })
     }
@@ -1338,6 +1369,51 @@ mod tests {
             store.authenticated_send(&session, &changed),
             Err(RepositoryError::IdempotencyConflict)
         ));
+    }
+
+    #[test]
+    fn inbox_activation_metadata_covers_mail_beyond_returned_page() {
+        let directory = TempDir::new().unwrap();
+        let mut store = Store::open(directory.path().join("psst.db")).unwrap();
+        let alice = store
+            .join_and_claim(&join_request("alice", "alice", 100))
+            .unwrap();
+        let bob = store
+            .join_and_claim(&join_request("bob", "bob", 101))
+            .unwrap();
+        let (alice_member, alice_instance, alice_token) = alice.into_parts();
+        let (bob_member, bob_instance, bob_token) = bob.into_parts();
+        let alice_session = AuthenticatedSession {
+            instance_id: &alice_instance.id,
+            resume_token: &alice_token,
+            now: millis(110),
+        };
+        for index in 0..101 {
+            let mut value = message(
+                &format!("activation-{index}"),
+                &alice_member,
+                &bob_member,
+                110,
+            );
+            if index == 100 {
+                value.semantics.priority = MessagePriority::High;
+            }
+            store.authenticated_send(&alice_session, &value).unwrap();
+        }
+        let bob_session = AuthenticatedSession {
+            instance_id: &bob_instance.id,
+            resume_token: &bob_token,
+            now: millis(110),
+        };
+        let page = store.authenticated_pending_page(&bob_session, 1).unwrap();
+        assert_eq!(page.messages.len(), 1);
+        assert_eq!(page.pending_count, 101);
+        assert_eq!(page.highest_priority, Some(MessagePriority::High));
+        assert_eq!(
+            page.oldest_message_id.as_ref().map(MessageId::as_str),
+            Some("msg_activation-0")
+        );
+        assert_eq!(page.messages[0].message.id.as_str(), "msg_activation-0");
     }
 
     #[test]

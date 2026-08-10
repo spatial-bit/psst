@@ -241,7 +241,12 @@ pub struct InboxQuery {
 const fn default_limit() -> u16 {
     100
 }
-response!(InboxResponse { messages: Vec<MessageDto>, pending_count: u64 });
+response!(InboxResponse {
+    messages: Vec<MessageDto>,
+    pending_count: u64,
+    highest_priority: Option<MessagePriorityDto>,
+    oldest_message_id: Option<String>
+});
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -391,7 +396,9 @@ mod tests {
         rt!(InboxQuery, r#"{"limit":10,"wait":2}"#);
         rt!(
             InboxResponse,
-            &format!(r#"{{"messages":[{message}],"pending_count":1}}"#)
+            &format!(
+                r#"{{"messages":[{message}],"pending_count":1,"highest_priority":"normal","oldest_message_id":"msg_one"}}"#
+            )
         );
         rt!(AckMessagesRequest, r#"{"message_ids":["msg_one"]}"#);
         rt!(

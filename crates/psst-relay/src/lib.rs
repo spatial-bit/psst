@@ -1785,6 +1785,8 @@ fn encode_inbox(page: InboxPage) -> Result<Response, ApiFailure> {
             .map(message_dto)
             .collect::<Result<Vec<_>, _>>()?,
         pending_count: page.pending_count,
+        highest_priority: page.highest_priority.map(priority_dto),
+        oldest_message_id: page.oldest_message_id.map(|id| id.to_string()),
     };
     let encoded =
         encode_bounded_inbox(&response).map_err(|_| ApiFailure(ApiErrorCode::PayloadTooLarge))?;
@@ -3288,6 +3290,12 @@ mod tests {
             let (status, _, inbox) = watcher.await.unwrap();
             assert_eq!(status, StatusCode::OK);
             assert_eq!(inbox["pending_count"], 1);
+            assert_eq!(inbox["highest_priority"], "normal");
+            assert!(
+                inbox["oldest_message_id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("msg_"))
+            );
         }
         assert_eq!(worker.inner.notifications.registration_count(), 0);
         worker.begin_shutdown();

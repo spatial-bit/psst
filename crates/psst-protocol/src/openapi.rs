@@ -93,6 +93,12 @@ fn openapi_value() -> Value {
     schemas["MessageSequence"]["minimum"] = json!(0);
     schemas["MessageSequence"]["maximum"] = json!(i64::MAX);
     schemas["InboxResponse"]["properties"]["messages"]["maxItems"] = json!(100);
+    schemas["InboxResponse"]["properties"]["oldest_message_id"] = json!({
+        "oneOf": [
+            {"type":"null"},
+            {"type":"string","minLength":5,"maxLength":128,"pattern":"^msg_[a-z0-9-]+$"}
+        ]
+    });
     schemas["TranscriptResponse"]["properties"]["messages"]["maxItems"] = json!(100);
 
     let id = json!({"type":"string","minLength":5,"maxLength":128,"pattern":"^(sqd|agt|mem|ins|msg)_[a-z0-9-]+$"});

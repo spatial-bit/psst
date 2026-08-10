@@ -159,7 +159,37 @@ impl Validate for InboxResponse {
                 "exceeds the 100-message response bound",
             ));
         }
-        validate_message_page(&self.messages)
+        validate_message_page(&self.messages)?;
+        if self.pending_count < self.messages.len() as u64 {
+            return Err(InvalidValue::new(
+                "pending_count",
+                "must include every returned message",
+            ));
+        }
+        match self.pending_count {
+            0 if self.messages.is_empty()
+                && self.highest_priority.is_none()
+                && self.oldest_message_id.is_none() =>
+            {
+                Ok(())
+            }
+            1.. if !self.messages.is_empty()
+                && self.highest_priority.is_some()
+                && self.oldest_message_id.as_deref()
+                    == self.messages.first().map(|message| message.id.as_str()) =>
+            {
+                MessageId::new(
+                    self.oldest_message_id
+                        .as_deref()
+                        .expect("guarded oldest id"),
+                )?;
+                Ok(())
+            }
+            _ => Err(InvalidValue::new(
+                "inbox",
+                "has inconsistent pending activation metadata",
+            )),
+        }
     }
 }
 
@@ -625,16 +655,29 @@ mod tests {
                 })
                 .collect(),
             pending_count: 17,
+            highest_priority: Some(MessagePriorityDto::Normal),
+            oldest_message_id: Some("msg_one".into()),
         };
         assert!(
             dishonest.validate().is_ok(),
             "count alone cannot detect encoded size"
         );
+        let mut missing_summary = dishonest.clone();
+        missing_summary.highest_priority = None;
+        assert!(missing_summary.validate().is_err());
+        let mut wrong_oldest = dishonest.clone();
+        wrong_oldest.oldest_message_id = Some("msg_other".into());
+        assert!(wrong_oldest.validate().is_err());
         assert!(encode_bounded_inbox(&dishonest).is_err());
         let honest = InboxResponse {
             messages: Vec::new(),
             pending_count: 0,
+            highest_priority: None,
+            oldest_message_id: None,
         };
         assert!(encode_bounded_inbox(&honest).is_ok());
+        let mut dishonest_empty = honest;
+        dishonest_empty.highest_priority = Some(MessagePriorityDto::High);
+        assert!(dishonest_empty.validate().is_err());
     }
 }

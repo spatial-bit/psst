@@ -180,11 +180,22 @@ components:
       type: object
     InboxResponse:
       properties:
+        highest_priority:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/MessagePriorityDto'
         messages:
           items:
             $ref: '#/components/schemas/MessageDto'
           maxItems: 100
           type: array
+        oldest_message_id:
+          oneOf:
+          - type: 'null'
+          - maxLength: 128
+            minLength: 5
+            pattern: ^msg_[a-z0-9-]+$
+            type: string
         pending_count:
           format: int64
           minimum: 0

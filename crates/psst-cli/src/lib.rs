@@ -633,7 +633,12 @@ async fn execute_listen_until(
     let response = loop {
         let poll = session.runtime.inbox(100, wait);
         let (response, cancelled) = tokio::select! {
-            () = &mut cancellation => (InboxResponse { messages: Vec::new(), pending_count: 0 }, true),
+            () = &mut cancellation => (InboxResponse {
+                messages: Vec::new(),
+                pending_count: 0,
+                highest_priority: None,
+                oldest_message_id: None,
+            }, true),
             response = poll => (response.map_err(|error| map_session_error(&error))?, false),
         };
         if !response.messages.is_empty() || wait == 0 || cancelled {
