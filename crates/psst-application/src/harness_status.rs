@@ -452,6 +452,14 @@ mod tests {
     use std::sync::Mutex as StdMutex;
     use tokio::sync::Notify;
 
+    fn test_paths(root: &Path) -> ProfilePaths {
+        ProfilePaths {
+            metadata: root.join("profiles/alpha.json"),
+            credential: root.join("credentials/alpha.json"),
+            lock: root.join("locks/alpha.lock"),
+        }
+    }
+
     fn timestamp() -> ApiTimestamp {
         ApiTimestamp::new(time::OffsetDateTime::UNIX_EPOCH).unwrap()
     }
@@ -628,11 +636,7 @@ mod tests {
     #[tokio::test]
     async fn publisher_tracks_running_and_durably_records_clean_stop() {
         let directory = tempfile::tempdir().unwrap();
-        let paths = ProfilePaths {
-            metadata: directory.path().join("profiles/alpha.json"),
-            credential: directory.path().join("credentials/alpha.json"),
-            lock: directory.path().join("locks/alpha.lock"),
-        };
+        let paths = test_paths(directory.path());
         let wake = WakeMetadata::new(
             "alpha".into(),
             "builders".into(),
