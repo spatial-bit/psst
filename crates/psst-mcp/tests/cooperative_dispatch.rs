@@ -165,6 +165,136 @@ async fn two_child_stdio_adapters_replay_ack_reconnect_and_preserve_untrusted_co
         .unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::too_many_lines)] // One ordered restart transcript preserves wake/ack causality.
+async fn pending_mail_emits_one_body_free_claude_channel_wake_until_acknowledged() {
+    let temp = tempfile::tempdir().unwrap();
+    let address = reserve_address();
+    let origin = format!("http://{address}");
+    let mut config = psst_relay::RelayConfig::local(temp.path().join("relay.db"));
+    config.bind = address;
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let (startup_tx, startup_rx) = oneshot::channel();
+    let relay = tokio::spawn(psst_relay::serve_with_startup(
+        config,
+        shutdown_rx,
+        startup_tx,
+    ));
+    tokio::time::timeout(Duration::from_secs(5), startup_rx)
+        .await
+        .expect("relay startup timed out")
+        .expect("relay startup reporter dropped");
+
+    Client::new(&origin, ClientConfig::default())
+        .unwrap()
+        .create_squad(&CreateSquadRequest {
+            name: "channel-e2e".into(),
+            mission: "exercise durable Claude Channel wake".into(),
+        })
+        .await
+        .unwrap();
+
+    let sender_root = temp.path().join("sender");
+    let receiver_root = temp.path().join("receiver");
+    let mut sender = McpChild::spawn(&origin, "sender-profile", &sender_root);
+    let mut receiver = McpChild::spawn_channel(&origin, "channel-profile", &receiver_root);
+    sender.initialize();
+    let initialized = receiver.initialize();
+    assert_eq!(
+        initialized["result"]["capabilities"]["experimental"]["claude/channel"],
+        json!({})
+    );
+    assert_success(sender.call(
+        "squad_join",
+        json!({"squad":"channel-e2e","name":"sender","role":"sender","mission":null}),
+    ));
+    assert_success(receiver.call(
+        "squad_join",
+        json!({"squad":"channel-e2e","name":"receiver","role":"receiver","mission":null}),
+    ));
+    let sent = assert_success(sender.call(
+        "message_send",
+        json!({"recipient":"receiver","body":"participant-body-canary","priority":"high","reply_to":null,"correlation_id":null}),
+    ));
+    let message_id = sent["message"]["id"].as_str().unwrap().to_owned();
+
+    let wake = receiver.read_response();
+    assert_eq!(wake["method"], "notifications/claude/channel");
+    assert_eq!(wake["params"]["meta"]["pending_count"], "1");
+    assert_eq!(wake["params"]["meta"]["highest_priority"], "high");
+    assert_eq!(wake["params"]["meta"]["oldest_message_id"], message_id);
+    assert!(!wake.to_string().contains("participant-body-canary"));
+
+    let first = assert_success(receiver.call(
+        "message_receive",
+        json!({"limit":20,"wait_seconds":0,"acknowledge_ids":[]}),
+    ));
+    let repeated = assert_success(receiver.call(
+        "message_receive",
+        json!({"limit":20,"wait_seconds":0,"acknowledge_ids":[]}),
+    ));
+    assert_eq!(first["messages"][0]["id"], message_id);
+    assert_eq!(repeated["messages"][0]["id"], message_id);
+    assert_eq!(first["pending_count"], 1);
+
+    let roster = assert_success(sender.call("squad_roster", json!({})));
+    let harnessed = roster["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|member| member["name"]["value"] == "receiver")
+        .expect("receiver appears in roster");
+    assert_eq!(harnessed["mode"]["value"], "harnessed");
+
+    let acknowledged =
+        assert_success(receiver.call("message_acknowledge", json!({"message_ids":[message_id]})));
+    assert_eq!(
+        acknowledged["acknowledged_ids"].as_array().unwrap().len(),
+        1
+    );
+    let empty = assert_success(receiver.call(
+        "message_receive",
+        json!({"limit":20,"wait_seconds":0,"acknowledge_ids":[]}),
+    ));
+    assert_eq!(empty["pending_count"], 0);
+    assert!(empty["messages"].as_array().unwrap().is_empty());
+
+    receiver.stop();
+    let restart_sent = assert_success(sender.call(
+        "message_send",
+        json!({"recipient":"receiver","body":"restart-body-canary","priority":"normal","reply_to":null,"correlation_id":null}),
+    ));
+    let restart_message_id = restart_sent["message"]["id"].as_str().unwrap().to_owned();
+    let mut receiver = McpChild::spawn_channel(&origin, "channel-profile", &receiver_root);
+    receiver.initialize();
+    let reconciled = receiver.read_response();
+    assert_eq!(reconciled["method"], "notifications/claude/channel");
+    assert_eq!(
+        reconciled["params"]["meta"]["oldest_message_id"],
+        restart_message_id
+    );
+    assert!(!reconciled.to_string().contains("restart-body-canary"));
+    let replayed = assert_success(receiver.call(
+        "message_receive",
+        json!({"limit":20,"wait_seconds":0,"acknowledge_ids":[]}),
+    ));
+    assert_eq!(replayed["messages"][0]["id"], restart_message_id);
+    assert_success(receiver.call(
+        "message_acknowledge",
+        json!({"message_ids":[restart_message_id]}),
+    ));
+    assert_success(receiver.call("squad_leave", json!({})));
+    receiver.stop();
+    assert_success(sender.call("squad_leave", json!({})));
+    sender.stop();
+    shutdown_tx.send(true).unwrap();
+    tokio::time::timeout(Duration::from_secs(10), relay)
+        .await
+        .expect("relay shutdown timed out")
+        .unwrap()
+        .unwrap();
+}
+
 struct McpChild {
     child: Option<Child>,
     stdin: Option<ChildStdin>,
@@ -175,6 +305,14 @@ struct McpChild {
 
 impl McpChild {
     fn spawn(origin: &str, profile: &str, root: &Path) -> Self {
+        Self::spawn_with_channel(origin, profile, root, false)
+    }
+
+    fn spawn_channel(origin: &str, profile: &str, root: &Path) -> Self {
+        Self::spawn_with_channel(origin, profile, root, true)
+    }
+
+    fn spawn_with_channel(origin: &str, profile: &str, root: &Path, channel: bool) -> Self {
         std::fs::create_dir_all(root).unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_psst-mcp"));
         command
@@ -186,9 +324,13 @@ impl McpChild {
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_DATA_HOME", root.join("data"))
             .env("XDG_RUNTIME_DIR", root.join("runtime"))
+            .env_remove("PSST_CLAUDE_CHANNEL")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if channel {
+            command.env("PSST_CLAUDE_CHANNEL", "enabled");
+        }
         let mut child = command.spawn().unwrap();
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
@@ -207,7 +349,7 @@ impl McpChild {
         }
     }
 
-    fn initialize(&mut self) {
+    fn initialize(&mut self) -> Value {
         let response = self.request(
             "initialize",
             json!({
@@ -217,6 +359,7 @@ impl McpChild {
         );
         assert_eq!(response["result"]["serverInfo"]["name"], "psst-mcp");
         self.write(json!({"jsonrpc":"2.0","method":"notifications/initialized"}));
+        response
     }
 
     fn call(&mut self, name: &str, arguments: Value) -> Value {

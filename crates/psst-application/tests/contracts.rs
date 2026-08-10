@@ -354,12 +354,11 @@ fn relay_and_client_error_mapping_is_exhaustive_and_stable() {
 }
 
 #[test]
-fn slice_four_paths_are_absent_from_slice_three_production_sources() {
+fn slice_four_client_paths_stay_inside_the_approved_claude_adapter() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let roots = [manifest.join("src"), manifest.join("../psst-mcp/src")];
-    let forbidden = [
+    let forbidden_everywhere = [
         ["claude", " -p"].concat(),
-        ["notifications/claude", "/channel"].concat(),
         ["turn", "/start"].concat(),
         ["turn", "/steer"].concat(),
         ["key", "stroke"].concat(),
@@ -369,15 +368,29 @@ fn slice_four_paths_are_absent_from_slice_three_production_sources() {
     for root in roots {
         for path in recursive_rust_files(&root) {
             let source = std::fs::read_to_string(&path).unwrap();
-            for marker in &forbidden {
+            for marker in &forbidden_everywhere {
                 assert!(
                     !source.contains(marker),
                     "deferred marker {marker:?} in {}",
                     path.display()
                 );
             }
+            for marker in ["claude/channel", "notifications/claude/channel"] {
+                if source.contains(marker) {
+                    assert_eq!(
+                        path.file_name().and_then(std::ffi::OsStr::to_str),
+                        Some("claude_channel.rs"),
+                        "Claude Channel marker escaped its adapter boundary: {}",
+                        path.display()
+                    );
+                }
+            }
         }
     }
+    let channel =
+        std::fs::read_to_string(manifest.join("../psst-mcp/src/claude_channel.rs")).unwrap();
+    assert_eq!(channel.matches("claude/channel").count(), 2);
+    assert_eq!(channel.matches("notifications/claude/channel").count(), 1);
     let lock =
         normalize_newlines(&std::fs::read_to_string(manifest.join("../../Cargo.lock")).unwrap());
     let workspace = std::fs::read_to_string(manifest.join("../../Cargo.toml")).unwrap();

@@ -22,3 +22,4 @@ workspace = true
 [dev-dependencies]
 psst-relay = { path = "../psst-relay" }
 tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
