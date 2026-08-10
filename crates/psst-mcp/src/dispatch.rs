@@ -196,7 +196,7 @@ impl DispatchState {
 
     pub(crate) async fn activation_runtime(
         &self,
-    ) -> Result<(Arc<SessionRuntime>, String, String), LocalErrorCode> {
+    ) -> Result<(Arc<SessionRuntime>, String, String, ProfilePaths), LocalErrorCode> {
         let runtime = self.active().await.map_err(|failure| failure.0)?;
         runtime
             .authority()
@@ -205,7 +205,12 @@ impl DispatchState {
         let binding = load_profile(&self.paths.metadata)
             .map_err(|error| local_io(&error))?
             .ok_or(LocalErrorCode::ProfileUnbound)?;
-        Ok((runtime, self.profile.clone(), binding.squad_name))
+        Ok((
+            runtime,
+            self.profile.clone(),
+            binding.squad_name,
+            self.paths.clone(),
+        ))
     }
 
     async fn join(self: &Arc<Self>, input: SquadJoinInput) -> Result<Value, ToolFailure> {

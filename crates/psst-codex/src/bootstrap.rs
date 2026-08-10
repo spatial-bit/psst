@@ -1,9 +1,9 @@
 use crate::{AppServerConfig, AppServerError, CodexAppServerHost};
 use psst_application::{
     ActivationFuture, ActivationHost, ActivationPolicy, ActivationRuntime, ActivationSource,
-    ConfigFlags, ConfigInputs, ConfigResolver, ObservationFailure, PlatformPaths, ProfileBinding,
-    ProfilePaths, RuntimeSpec, SessionError, SessionRuntime, WakeMetadata, load_profile,
-    verify_profile_origin,
+    ConfigFlags, ConfigInputs, ConfigResolver, HarnessAdapterKind, HarnessStatusPublisher,
+    ObservationFailure, PlatformPaths, ProfileBinding, ProfilePaths, RuntimeSpec, SessionError,
+    SessionRuntime, WakeMetadata, load_profile, verify_profile_origin,
 };
 use psst_client::{Client, ClientConfig, Error as ClientError};
 use psst_protocol::{AgentModeDto, ClientMetadata, InboxResponse};
@@ -11,7 +11,8 @@ use std::{collections::BTreeMap, io, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
 pub struct CodexActivation {
-    activation: ActivationRuntime,
+    activation: Arc<ActivationRuntime>,
+    status: Arc<HarnessStatusPublisher>,
     host: Arc<CodexAppServerHost>,
     source: Arc<CyclingSessionSource>,
 }
@@ -32,8 +33,12 @@ impl CodexActivation {
     /// Returns an error if either owned host cannot be shut down coherently.
     pub async fn shutdown(&self) -> Result<(), AppServerError> {
         self.activation.shutdown().await;
-        self.host.shutdown().await?;
-        self.source.shutdown().await
+        let status = self.status.shutdown().await.map_err(map_io);
+        let host = self.host.shutdown().await;
+        let source = self.source.shutdown().await;
+        status?;
+        host?;
+        source
     }
 }
 
@@ -90,14 +95,32 @@ pub async fn start_from_environment() -> Result<CodexActivation, AppServerError>
         profile: resolved.profile.value,
         runtime: Mutex::new(None),
     });
-    let activation = ActivationRuntime::start(
-        Arc::clone(&source) as Arc<dyn ActivationSource>,
-        Arc::clone(&host) as Arc<dyn ActivationHost>,
-        ActivationPolicy::default(),
+    let activation = Arc::new(
+        ActivationRuntime::start(
+            Arc::clone(&source) as Arc<dyn ActivationSource>,
+            Arc::clone(&host) as Arc<dyn ActivationHost>,
+            ActivationPolicy::default(),
+        )
+        .map_err(|_| AppServerError::Configuration)?,
+    );
+    let status = match HarnessStatusPublisher::start(
+        Arc::clone(&activation),
+        &source.paths,
+        source.profile.clone(),
+        HarnessAdapterKind::CodexAppServer,
     )
-    .map_err(|_| AppServerError::Configuration)?;
+    .await
+    {
+        Ok(status) => status,
+        Err(error) => {
+            activation.shutdown().await;
+            let _ = source.shutdown().await;
+            return Err(map_io(error));
+        }
+    };
     Ok(CodexActivation {
         activation,
+        status,
         host,
         source,
     })

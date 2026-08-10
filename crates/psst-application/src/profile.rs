@@ -102,6 +102,21 @@ impl ProfilePaths {
             lock: paths.runtime_dir.join("locks").join(format!("{key}.lock")),
         })
     }
+
+    /// Derives the non-secret harness-status record next to the canonical profile metadata.
+    ///
+    /// # Errors
+    /// Returns an error only when the already-validated metadata path has no file stem.
+    pub fn harness_status(&self) -> Result<PathBuf, ConfigError> {
+        let stem = self
+            .metadata
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .ok_or(ConfigError::Invalid("profile status path"))?;
+        Ok(self
+            .metadata
+            .with_file_name(format!("{stem}.harness-v1.json")))
+    }
 }
 
 pub struct ProfileLock {
@@ -340,7 +355,7 @@ fn store_profile_guarded(
     atomic_replace(path, &bytes)
 }
 
-fn atomic_replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn atomic_replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
     #[cfg(unix)]
     {
         atomic_replace_unix(path, bytes)
@@ -442,7 +457,7 @@ pub(crate) fn reject_symlink(path: &Path) -> io::Result<()> {
 }
 
 #[cfg(windows)]
-fn reject_handle_reparse(file: &File) -> io::Result<()> {
+pub(crate) fn reject_handle_reparse(file: &File) -> io::Result<()> {
     use std::os::windows::fs::MetadataExt;
     if file.metadata()?.file_attributes() & 0x400 != 0 {
         return Err(io::Error::new(
@@ -452,7 +467,7 @@ fn reject_handle_reparse(file: &File) -> io::Result<()> {
     }
     Ok(())
 }
-fn open_directory_guard(path: &Path) -> io::Result<File> {
+pub(crate) fn open_directory_guard(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -559,7 +574,24 @@ mod tests {
         let datagram = UdpSocket::bind(udp).unwrap();
         assert!(ProfileLock::acquire(&p).is_err());
         drop(datagram);
-        assert!(ProfileLock::acquire(&p).is_ok());
+        // The deliberately bounded macOS/Windows kernel namespace can also be
+        // occupied conservatively by another profile-lock test running in this
+        // process. Once our injected occupant is gone, require eventual bounded
+        // acquisition rather than assuming the shared namespace is immediately
+        // idle at this exact scheduler tick.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            match ProfileLock::acquire(&p) {
+                Ok(guard) => {
+                    drop(guard);
+                    break;
+                }
+                Err(_) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("profile lock remained unavailable: {error}"),
+            }
+        }
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]

@@ -1,7 +1,7 @@
 use psst_application::{
     ActivationFuture, ActivationHost, ActivationPhase, ActivationPolicy, ActivationRuntime,
-    ActivationSource, ActivationTurn, HostFailure, SessionActivationSource, SessionRuntime,
-    WakeMetadata,
+    ActivationSource, ActivationTurn, HarnessAdapterKind, HarnessStatusPublisher, HostFailure,
+    ProfilePaths, SessionActivationSource, SessionRuntime, WakeMetadata,
 };
 use rmcp::{
     Peer, RoleServer,
@@ -30,6 +30,7 @@ const TRANSPORT_DIAGNOSTIC: &str = "psst-mcp: Claude Channel notification transp
 pub(crate) struct ClaudeChannelController {
     host: Arc<ClaudeChannelHost>,
     activation: Arc<ActivationRuntime>,
+    status: Arc<HarnessStatusPublisher>,
     diagnostic_stop: watch::Sender<bool>,
     diagnostic_task: Mutex<Option<JoinHandle<()>>>,
 }
@@ -43,28 +44,49 @@ impl fmt::Debug for ClaudeChannelController {
 }
 
 impl ClaudeChannelController {
-    pub(crate) fn start(
+    pub(crate) async fn start(
         runtime: Arc<SessionRuntime>,
         profile: String,
         squad: String,
-    ) -> Result<Arc<Self>, psst_application::ActivationContractError> {
+        paths: &ProfilePaths,
+    ) -> std::io::Result<Arc<Self>> {
         let host = Arc::new(ClaudeChannelHost {
             peer: RwLock::new(None),
             runtime: Arc::clone(&runtime),
         });
-        let source: Arc<dyn ActivationSource> =
-            Arc::new(SessionActivationSource::new(runtime, profile, squad)?);
-        let activation = Arc::new(ActivationRuntime::start(
-            source,
-            Arc::clone(&host) as Arc<dyn ActivationHost>,
-            ActivationPolicy::default(),
-        )?);
+        let source: Arc<dyn ActivationSource> = Arc::new(
+            SessionActivationSource::new(runtime, profile.clone(), squad)
+                .map_err(std::io::Error::other)?,
+        );
+        let activation = Arc::new(
+            ActivationRuntime::start(
+                source,
+                Arc::clone(&host) as Arc<dyn ActivationHost>,
+                ActivationPolicy::default(),
+            )
+            .map_err(std::io::Error::other)?,
+        );
+        let status = match HarnessStatusPublisher::start(
+            Arc::clone(&activation),
+            paths,
+            profile,
+            HarnessAdapterKind::ClaudeChannel,
+        )
+        .await
+        {
+            Ok(status) => status,
+            Err(error) => {
+                activation.shutdown().await;
+                return Err(error);
+            }
+        };
         let (diagnostic_stop, diagnostic_rx) = watch::channel(false);
         let diagnostic_task =
             tokio::spawn(monitor_activation(Arc::clone(&activation), diagnostic_rx));
         Ok(Arc::new(Self {
             host,
             activation,
+            status,
             diagnostic_stop,
             diagnostic_task: Mutex::new(Some(diagnostic_task)),
         }))
@@ -76,6 +98,9 @@ impl ClaudeChannelController {
 
     pub(crate) async fn shutdown(&self) {
         self.activation.shutdown().await;
+        if self.status.shutdown().await.is_err() {
+            eprintln!("psst-mcp: Claude Channel status shutdown failed");
+        }
         let _ = self.diagnostic_stop.send(true);
         if let Some(task) = self.diagnostic_task.lock().await.take() {
             let _ = task.await;

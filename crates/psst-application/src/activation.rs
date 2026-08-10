@@ -1,6 +1,7 @@
 use crate::{SessionError, SessionRuntime};
 use psst_client::Error as ClientError;
 use psst_protocol::{InboxResponse, MessagePriorityDto};
+use serde::{Deserialize, Serialize};
 use std::{fmt, future::Future, pin::Pin, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
@@ -17,7 +18,8 @@ pub const DEFAULT_BACKOFF_MAX: Duration = Duration::from_secs(60);
 pub const MAX_BACKOFF_DURATION: Duration = Duration::from_secs(300);
 pub const MAX_BACKOFF_ATTEMPTS: u8 = 8;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ActivationPhase {
     Quiet,
     Pending,

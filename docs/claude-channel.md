@@ -3,6 +3,9 @@
 Status: Slice 4 implementation candidate. The Channel interface is an experimental Claude Code
 preview and is not part of the `v0.1.0-alpha.1` release surface.
 
+For the shared foreground start, status, stop, and restart workflow, see
+[Wake harness operations](harness-operations.md).
+
 Psst can extend its existing stdio MCP server with Claude Code's one-way Channel capability. In
 this mode the adapter observes the durable inbox and sends a fixed wake notification when mail is
 pending. Claude still retrieves mail with `message_receive` and must explicitly acknowledge
