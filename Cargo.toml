@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/psst-application", "crates/psst-cli", "crates/psst-core", "crates/psst-protocol", "crates/psst-store", "crates/psst-relay", "crates/psst-client", "crates/psst-mcp"]
+members = ["crates/psst-application", "crates/psst-cli", "crates/psst-codex", "crates/psst-core", "crates/psst-protocol", "crates/psst-store", "crates/psst-relay", "crates/psst-client", "crates/psst-mcp"]
 
 [workspace.package]
 version = "0.1.0-alpha.1"

@@ -1,0 +1,19 @@
+[package]
+name = "psst-codex"
+description = "Local Codex App Server wake-on-mail adapter for Psst"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+psst-application = { path = "../psst-application" }
+psst-client = { path = "../psst-client" }
+psst-protocol = { path = "../psst-protocol" }
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["process"] }
+
+[lints]
+workspace = true

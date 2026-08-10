@@ -989,6 +989,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "psst-codex"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "psst-application",
+ "psst-client",
+ "psst-protocol",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "psst-core"
 version = "0.1.0-alpha.1"
 dependencies = [
