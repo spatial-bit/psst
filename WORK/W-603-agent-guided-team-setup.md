@@ -1,6 +1,6 @@
 # W-603: Agent-guided team setup and operations
 
-Status: planned
+Status: local documentation candidate; checkoutless agent-followed rehearsal pending
 
 ## Objective
 
@@ -17,3 +17,14 @@ verifying mail behavior, operating the hub, troubleshooting, and cleaning up.
 - The journey proves replay-before-ack, explicit acknowledgement, restart/resume, wake-on-mail, and
   safe leave/stop behavior.
 - A checkoutless agent-followed rehearsal validates the document against the packaged binaries.
+
+## Evidence
+
+- `docs/team-setup-agent-guide.md` is a single ordered runbook for artifact verification, topology
+  planning, one-hub/multi-squad setup, unique membership profiles, cooperative MCP, Claude Channel,
+  Codex App Server, replay/ack/reply, restart/resume, wake isolation, diagnostics, leave, and stop.
+- The guide gives directly executable PowerShell and POSIX archive commands and instructs the
+  assisting agent to ask before topology or configuration changes, fail closed on identity
+  mismatches, and never inspect or expose credentials.
+- The alpha.2 dogfood packager and inspector include the guide as `TEAM-SETUP.md` in their exact
+  manifest-controlled inventory. Native checkoutless evidence remains pending.

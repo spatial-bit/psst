@@ -28,6 +28,7 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--license", required=True, type=Path)
     parser.add_argument("--quickstart", required=True, type=Path)
+    parser.add_argument("--team-guide", required=True, type=Path)
     parser.add_argument("--sbom", required=True, type=Path)
     parser.add_argument("--format", required=True, choices=("zip", "tar.gz"))
     return parser.parse_args()
@@ -92,10 +93,11 @@ def main() -> None:
         args.psst_relay,
         args.license,
         args.quickstart,
+        args.team_guide,
         args.sbom,
     )
     if any(not path.is_file() for path in required_files):
-        raise FileNotFoundError("binaries, license, and quickstart must be regular files")
+        raise FileNotFoundError("binaries and bundled documents must be regular files")
 
     archive_stem = f"psst-dogfood-{args.version}-{args.revision}-{args.target}"
     expected_suffix = ".zip" if args.format == "zip" else ".tar.gz"
@@ -119,6 +121,7 @@ def main() -> None:
             installed_binary.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
         shutil.copyfile(args.license, root / "LICENSE")
         shutil.copyfile(args.quickstart, root / "DOGFOOD-QUICKSTART.md")
+        shutil.copyfile(args.team_guide, root / "TEAM-SETUP.md")
         shutil.copyfile(args.sbom, root / "SBOM.spdx.json")
         warning = f"""UNRELEASED DOGFOOD BUILD
 

@@ -20,6 +20,8 @@ GitHub Actions. The archive has one same-named root directory containing exactly
 - `BUILD-INFO.txt`, with artifact name, target label, version, and revision;
 - `DEVELOPMENT-BUILD`, with the unreleased dogfood and trusted-LAN warning;
 - `DOGFOOD-QUICKSTART.md`, the concise local, LAN, CLI, profile, delivery, and MCP guide.
+- `TEAM-SETUP.md`, the complete agent-readable one-hub/multi-team setup, wake, verification,
+  troubleshooting, and cleanup runbook;
 - `MANIFEST.json`, with the exact internal inventory, sizes, and SHA-256 hashes;
 - `SBOM.spdx.json`, the deterministic SPDX 2.3 package inventory.
 

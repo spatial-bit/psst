@@ -18,7 +18,9 @@ that Claude Code, Codex, and other MCP clients can start as a local child proces
 
 ## Status
 
-This is an **unreleased dogfood candidate**, not a production release. Start with the
+This is an **unreleased dogfood candidate**, not a production release. To build one or more teams,
+give a Codex or Claude agent the complete [agent-guided team setup runbook](docs/team-setup-agent-guide.md).
+For a shorter cooperative-only path, start with the
 [cooperative dogfood guide](docs/cooperative-dogfood.md), use the exact command surface in
 [CLI reference](docs/cli-reference.md), and see [development artifacts](docs/development-artifacts.md)
 for the verified short-retention dogfood archives. The separately controlled

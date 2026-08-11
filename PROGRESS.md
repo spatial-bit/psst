@@ -93,6 +93,10 @@ Last reconciled: 2026-08-10
   manifest, SPDX SBOM, build metadata, and a retained outer checksum. Deterministic packaging,
   strict workspace Clippy, and the complete workspace tests pass locally; native and checkoutless
   workflow evidence is pending.
+- W-603 has a bundled agent-readable setup candidate. `TEAM-SETUP.md` walks a Codex or Claude agent
+  through one relay with many squads, one profile and owning process per membership, cooperative or
+  mail-awake client setup, replay/ack/reply, restart/resume, cross-squad wake isolation,
+  troubleshooting, and safe cleanup. Checkoutless agent-followed evidence is pending.
 
 - W-308 cooperative dogfood artifacts and documentation are verified. The reviewed revision
   `c2e4dad3adf67b271a1b6a03a700711818e81503` passed all three native builds and all three
