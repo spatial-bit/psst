@@ -82,6 +82,9 @@ Core use cases:
 - **FR-008:** A member can leave; leaving closes the active instance but retains history.
 - **FR-009:** A client can read squad mission, lifecycle state, roster, transport presence, availability, mode, and last-seen time.
 - **FR-010:** Archiving a squad rejects new joins and messages but preserves reads and history.
+- **FR-011:** One relay can host multiple active squads concurrently. Membership names, recipient resolution, rosters, mailboxes, acknowledgements, transcripts, message references, and dedupe scopes are isolated by squad.
+- **FR-012:** One local profile represents exactly one durable membership in one squad. An agent participating in multiple squads uses a distinct profile, credential, and adapter process for each membership.
+- **FR-013:** Roster reads require a valid historical credential for the named squad. A credential bound to another squad and an unauthenticated request fail with concealed `not_found`; a former member may still read its squad's preserved roster after leave or archive while it retains the credential.
 
 ### Presence
 
@@ -143,7 +146,7 @@ Core use cases:
 
 ## 8. Security model
 
-Version one assumes every process able to reach the relay is trusted. It is inappropriate for hostile LANs, public Wi-Fi, port-forwarding to the internet, or multi-tenant use.
+Version one assumes every process able to reach the relay is trusted. Squad scoping prevents accidental cross-team routing and authority confusion; it is not a hostile multi-tenant security boundary because any process that can reach the relay can use the unauthenticated join bootstrap. It is inappropriate for hostile LANs, public Wi-Fi, port-forwarding to the internet, or multi-tenant use.
 
 Opaque resume tokens protect continuity against accidental collision, not a determined LAN attacker. Tokens:
 

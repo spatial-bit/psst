@@ -1547,6 +1547,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Database busy
+      security:
+      - sessionCredential: []
       tags: []
   /v1/squads/{squad}/transcript:
     get:

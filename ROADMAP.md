@@ -1,5 +1,14 @@
 # Roadmap
 
+## Product milestones
+
+- **Foundation:** Slices 0-2 establish the durable store, protocol, relay, and typed client.
+- **Cooperative dogfood:** Slice 3 adds safe profiles, CLI, and voluntary MCP collaboration.
+- **Wake-on-mail development:** Slice 4 proves Claude Channel and Codex App Server activation.
+- **Portable cooperative alpha:** Slice 5 packages and rehearses `v0.1.0-alpha.1` without publishing it.
+- **Mail-awake fleet alpha:** Slice 6 packages the wake harnesses, formalizes multi-squad operation,
+  and supplies an agent-readable team setup journey for `v0.1.0-alpha.2`.
+
 ## Slice 0 — Repository and quality foundation
 
 Status: verified
@@ -110,3 +119,27 @@ builds; deterministic archive, manifest, checksum, SBOM, secret/path scan, insta
 relay, replay/acknowledgement, restart, and MCP initialization checks pass from downloaded assets
 without a checkout or Rust. Tagging, protected-environment configuration, isolated non-loopback LAN
 operation, attestation, and publication remain explicit owner-controlled boundaries.
+
+## Slice 6 — Mail-awake fleet dogfood
+
+Status: active
+
+Same-relay multi-squad isolation, packaged Claude/Codex wake harnesses, and a complete guided team
+setup and operations journey.
+
+Execution order:
+
+```text
+W-601 Multi-squad authority and routing contract
+  -> W-602 Alpha.2 wake-harness package contract
+      -> W-603 Agent-readable team setup and operations guide
+          -> W-604 Native mail-awake fleet gate
+```
+
+Gate: on one relay, two squads with overlapping member names and operation identifiers cannot read,
+route, acknowledge, mutate, or wake across squad boundaries. Downloaded Windows x86-64, Linux
+x86-64, and macOS ARM64 archives include the supported cooperative and wake harnesses and pass a
+checkoutless create/join/send/wake/replay/ack/restart journey. A Claude or Codex agent given only the
+bundled guide can walk a user through creating one or more teams, assigning one profile per
+membership, starting the correct harness, verifying delivery, and cleaning up safely. Tagging and
+publication remain separate owner-authorized actions.

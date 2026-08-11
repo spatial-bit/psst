@@ -24,7 +24,7 @@ fn join_squad() {}
 fn resume_squad() {}
 #[utoipa::path(post, path="/v1/squads/{squad}/leave", params(("squad"=String, Path)), security(("sessionCredential"=[])), request_body=LeaveSquadRequest, responses((status=200, body=LeaveSquadResponse)))]
 fn leave_squad() {}
-#[utoipa::path(get, path="/v1/squads/{squad}/roster", params(("squad"=String, Path)), responses((status=200, body=RosterResponse)))]
+#[utoipa::path(get, path="/v1/squads/{squad}/roster", params(("squad"=String, Path)), security(("sessionCredential"=[])), responses((status=200, body=RosterResponse)))]
 fn roster() {}
 #[utoipa::path(post, path="/v1/heartbeat", security(("sessionCredential"=[])), request_body=HeartbeatRequest, responses((status=200, body=HeartbeatResponse)))]
 fn heartbeat() {}
