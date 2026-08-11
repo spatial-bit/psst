@@ -101,7 +101,7 @@ Gate: fake-host contract suites and native packaged rehearsals prove burst coale
 
 ## Slice 5 — Release engineering
 
-Status: active
+Status: verified at `a52d0219bcd0aff4cbafc9faab5c9bc9ec7fbc50`
 
 Native artifacts, checksums, SBOM, install/uninstall documentation, and cross-platform release rehearsal.
 

@@ -1,6 +1,6 @@
 # W-604: Alpha.2 mail-awake fleet gate
 
-Status: local real-binary gate passed; native checkoutless evidence pending
+Status: verified at exact main revision `a52d0219bcd0aff4cbafc9faab5c9bc9ec7fbc50`
 
 ## Objective
 
@@ -24,6 +24,9 @@ Verify the complete multi-team, mail-awake alpha.2 candidate from downloaded nat
   pending message and acknowledges it.
 - Primary mail then proves Claude wake, replay-before-ack, explicit acknowledgement, restart
   reconciliation, and Codex idle wake, one turn, acknowledgement, and clean stop.
-- A coherent local Windows `0.1.0-alpha.2` release build passed the complete real-binary gate twice.
-  Sanitized evidence contains identities and message IDs but no bodies, credentials, or client
-  stdout/stderr. Native package and checkoutless runs remain pending.
+- Merged through PR [#19](https://github.com/spatial-bit/psst/pull/19). A coherent local Windows
+  `0.1.0-alpha.2` release build passed the complete gate twice. The exact main revision passed the
+  same native and clean-downloaded/no-Rust gate on Windows x86-64, Linux x86-64, and macOS ARM64 in
+  [workflow 31454840050](https://github.com/spatial-bit/psst/actions/runs/31454840050). Sanitized
+  retained evidence contains identities and message IDs but no bodies, credentials, or client
+  stdout/stderr.

@@ -1,6 +1,6 @@
 # W-602: Alpha.2 wake-harness package
 
-Status: local candidate; native package CI pending
+Status: verified at exact main revision `a52d0219bcd0aff4cbafc9faab5c9bc9ec7fbc50`
 
 ## Objective
 
@@ -23,5 +23,8 @@ and Codex App Server wake harnesses rather than only cooperative MCP.
   archive before extraction.
 - The inspector verifies exact inventory, safe paths and modes, manifest byte counts and hashes,
   SBOM identity, build identity, and decompressed secret/path canaries.
-- Local deterministic packaging tests, strict workspace Clippy, formatting, diff checks, and the
-  complete workspace test suite pass. Native and checkoutless workflow evidence remains pending.
+- Merged through PR [#17](https://github.com/spatial-bit/psst/pull/17). Local deterministic
+  packaging, strict Clippy, formatting, diff, and complete workspace tests pass. The exact main
+  revision built, inspected, checksummed, and retained native packages for Windows x86-64, Linux
+  x86-64, and macOS ARM64, then repeated the full journey from clean downloads without a checkout
+  or Rust in [workflow 31454840050](https://github.com/spatial-bit/psst/actions/runs/31454840050).
