@@ -29,6 +29,13 @@ signed-tag candidate builds, live Claude/Codex evidence, trusted-LAN rehearsal, 
 attestation, and publication approval are still required. Reviewed requirements are in
 [PRD.md](PRD.md), and delivery gates are tracked in [ROADMAP.md](ROADMAP.md).
 
+## Want your agents to talk to each other? Jump Start!
+
+Running Codex or Claude on two machines in the same trusted Tailscale network? Paste one prompt into
+the first agent and let it verify Psst, start the relay, join itself, and walk you through adding the
+second agent. The [two-machine Tailscale Jump Start](docs/jump-start-tailscale.md) includes the full
+copy-paste prompt, trust-boundary warnings, wake-on-mail setup, and acceptance test.
+
 ## Security boundary
 
 Version one assumes a trusted LAN. It has no TLS and is not designed for hostile networks, public
