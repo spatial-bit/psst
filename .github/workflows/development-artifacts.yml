@@ -20,6 +20,7 @@ on:
       - "scripts/extract-development-artifact.py"
       - "docs/development-artifacts.md"
       - "docs/dogfood-quickstart.md"
+      - "docs/team-setup-agent-guide.md"
   push:
     branches: [main]
 
@@ -160,6 +161,7 @@ jobs:
           --output "artifacts/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.${{ matrix.format }}"
           --license LICENSE
           --quickstart docs/dogfood-quickstart.md
+          --team-guide docs/team-setup-agent-guide.md
           --sbom SBOM.spdx.json
           --format "${{ matrix.format }}"
       - name: Generate archive checksum
@@ -255,6 +257,7 @@ jobs:
             "$archiveRoot/BUILD-INFO.txt",
             "$archiveRoot/DEVELOPMENT-BUILD",
             "$archiveRoot/DOGFOOD-QUICKSTART.md",
+            "$archiveRoot/TEAM-SETUP.md",
             "$archiveRoot/LICENSE",
             "$archiveRoot/MANIFEST.json",
             "$archiveRoot/SBOM.spdx.json",
@@ -274,7 +277,7 @@ jobs:
           $mcp = Join-Path $root 'psst-mcp${{ matrix.suffix }}'
           $codex = Join-Path $root 'psst-codex${{ matrix.suffix }}'
           $binary = Join-Path $root 'psst-relay${{ matrix.suffix }}'
-          $expected = @('BUILD-INFO.txt','DEVELOPMENT-BUILD','DOGFOOD-QUICKSTART.md','LICENSE','MANIFEST.json','SBOM.spdx.json','psst${{ matrix.suffix }}','psst-mcp${{ matrix.suffix }}','psst-codex${{ matrix.suffix }}','psst-relay${{ matrix.suffix }}') | Sort-Object
+          $expected = @('BUILD-INFO.txt','DEVELOPMENT-BUILD','DOGFOOD-QUICKSTART.md','TEAM-SETUP.md','LICENSE','MANIFEST.json','SBOM.spdx.json','psst${{ matrix.suffix }}','psst-mcp${{ matrix.suffix }}','psst-codex${{ matrix.suffix }}','psst-relay${{ matrix.suffix }}') | Sort-Object
           $entries = Get-ChildItem -LiteralPath $root -Force -Recurse
           if ($entries | Where-Object { $_.PSIsContainer }) { throw 'archive contains an unexpected nested directory' }
           if ($entries | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) { throw 'archive contains a link or reparse point' }

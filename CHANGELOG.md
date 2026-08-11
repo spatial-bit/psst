@@ -17,6 +17,8 @@ All notable changes will be documented here.
   payload manifest, SPDX SBOM, and an outer archive checksum.
 - Explicit same-relay multi-squad isolation for authority, roster, direct mail, acknowledgement,
   transcript, leave, and archive operations, including overlapping member names and operation IDs.
+- A bundled agent-readable runbook for setting up and operating one or many cooperative squads with
+  Codex, Claude, and the mail-awake harnesses.
 
 The `v0.1.0-alpha.1` release is not published. Signed-tag builds, the live Claude/Codex walkthrough,
 isolated trusted-LAN rehearsal, independent release attestation, and explicit publication approval

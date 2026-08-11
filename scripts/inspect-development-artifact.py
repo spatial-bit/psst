@@ -50,6 +50,7 @@ def main() -> None:
         f"{root}/BUILD-INFO.txt",
         f"{root}/DEVELOPMENT-BUILD",
         f"{root}/DOGFOOD-QUICKSTART.md",
+        f"{root}/TEAM-SETUP.md",
         f"{root}/MANIFEST.json",
         f"{root}/SBOM.spdx.json",
     }

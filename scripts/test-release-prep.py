@@ -178,7 +178,7 @@ def main() -> None:
         dogfood_arguments = (
             "--psst", binary, "--psst-mcp", binary, "--psst-codex", binary,
             "--psst-relay", binary, "--license", license_file, "--quickstart", readme,
-            "--sbom", sbom_a, "--target", "windows-x86_64",
+            "--team-guide", readme, "--sbom", sbom_a, "--target", "windows-x86_64",
             "--revision", dogfood_revision, "--version", "0.1.0-alpha.2",
             "--output", dogfood, "--format", "zip",
         )
@@ -187,7 +187,7 @@ def main() -> None:
         with zipfile.ZipFile(dogfood) as packaged:
             dogfood_root = f"psst-dogfood-0.1.0-alpha.2-{dogfood_revision}-windows-x86_64"
             filenames = {
-                "BUILD-INFO.txt", "DEVELOPMENT-BUILD", "DOGFOOD-QUICKSTART.md", "LICENSE",
+                "BUILD-INFO.txt", "DEVELOPMENT-BUILD", "DOGFOOD-QUICKSTART.md", "TEAM-SETUP.md", "LICENSE",
                 "MANIFEST.json", "SBOM.spdx.json", "psst.exe", "psst-mcp.exe",
                 "psst-codex.exe", "psst-relay.exe",
             }

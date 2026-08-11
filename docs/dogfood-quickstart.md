@@ -8,6 +8,9 @@ Before running a binary, verify the separately retained `<target>.SHA256` agains
 then verify the extracted files against `MANIFEST.json`. `SBOM.spdx.json` records the Rust package
 inventory. These unsigned hashes detect changes; they do not authenticate who built the archive.
 
+To have a Codex or Claude agent walk an operator through a complete one-hub, multi-team deployment,
+point it at the bundled `TEAM-SETUP.md` and ask it to follow the runbook in order.
+
 ## Start a disposable local relay
 
 Choose an empty sibling data directory outside the extracted archive. On Linux or macOS:
