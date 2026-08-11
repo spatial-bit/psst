@@ -1,7 +1,7 @@
 # Progress
 
-Current slice: 5 — release engineering
-Current gate: W-501 alpha release identity and workflow contract
+Current slice: 6 — mail-awake fleet dogfood
+Current gate: W-601 multi-squad authority and routing contract
 Last reconciled: 2026-08-10
 
 ## Verified
@@ -83,6 +83,12 @@ Last reconciled: 2026-08-10
 
 ## Ready
 
+- Slice 6 is active as the `v0.1.0-alpha.2` product milestone. W-601 formalizes one relay as a
+  multi-squad hub, one profile per squad membership, and squad-scoped roster/mail/authority. The
+  first focused real-relay regression uses two squads with overlapping `alice`/`bob` names and the
+  same client operation identifiers; it proves independent roster, recipient resolution, dedupe,
+  inbox, acknowledgement, transcript, leave, and archive behavior. Native CI is pending.
+
 - W-308 cooperative dogfood artifacts and documentation are verified. The reviewed revision
   `c2e4dad3adf67b271a1b6a03a700711818e81503` passed all three native builds and all three
   checkoutless clean-download rehearsals in
@@ -113,7 +119,7 @@ Last reconciled: 2026-08-10
 
 ## Next coordinator action
 
-Freeze and verify W-501's pre-tag release identity and workflow safety contracts on all three
-standard CI platforms. Continue through deterministic assets and checkoutless rehearsal without
-creating a tag or publishing. Signer configuration, protected environments, isolated non-loopback
-LAN operation, attestation, and publication remain separate explicit-authority actions.
+Finish W-601's multi-squad isolation matrix and native review, then define the alpha.2 archive
+inventory with `psst-codex` and Channel-capable `psst-mcp`. Follow with the bundled agent-readable
+multi-team setup guide and checkoutless wake-on-mail fleet rehearsal. Do not tag or publish without
+separate exact owner authorization.

@@ -10,7 +10,8 @@ use crate::instance::{authenticate, insert_instance, validate_client, validate_o
 use crate::message::{find_by_dedupe, resolve_retry, send_in_transaction};
 use crate::{
     AcknowledgeMessages, ClaimOutcome, InboxQuery, InstanceRecord, JoinMembership, LeasePolicy,
-    MembershipRecord, MessageRecord, RepositoryError, SendMessage, SquadRecord, Store,
+    MembershipRecord, MessageRecord, RepositoryError, RosterMember, SendMessage, SquadRecord,
+    Store,
 };
 
 #[derive(Clone, Debug)]
@@ -524,6 +525,29 @@ impl Store {
             heartbeat_interval: policy.heartbeat_interval(),
             lease_duration: policy.lease_duration(),
         })
+    }
+
+    /// Reads the roster only when the credential belongs to the named squad.
+    ///
+    /// Historical authentication deliberately permits a former member to read
+    /// preserved roster history after leaving or after the squad is archived,
+    /// while preventing a profile bound to another squad from selecting it by
+    /// name.
+    pub fn authenticated_roster(
+        &mut self,
+        session: &AuthenticatedSession<'_>,
+        expected_squad: &SquadName,
+    ) -> Result<Vec<RosterMember>, RepositoryError> {
+        let tx = self
+            .connection_mut()
+            .transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let identity = authenticate_historical(&tx, session)?;
+        let squad = squad_by_id(&tx, &identity.squad)?;
+        if &squad.name != expected_squad {
+            return Err(RepositoryError::NotFound);
+        }
+        tx.commit()?;
+        self.roster(expected_squad, session.now)
     }
 
     pub fn authenticated_send(

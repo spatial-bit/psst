@@ -985,7 +985,7 @@ mod tests {
         response::IntoResponse,
         routing::{get, post},
     };
-    use psst_protocol::{AgentModeDto, ApiTimestamp, ClientMetadata, SquadStateDto};
+    use psst_protocol::{AgentModeDto, ApiErrorCode, ApiTimestamp, ClientMetadata, SquadStateDto};
     use std::sync::{
         Arc, Mutex,
         atomic::{AtomicI64, Ordering},
@@ -1843,6 +1843,147 @@ mod tests {
             .unwrap();
         assert_eq!(transcript.messages.len(), 1);
         restarted.leave("team", &bob.credential).await.unwrap();
+        worker.stop().unwrap();
+        worker_join.join().unwrap().unwrap();
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn one_relay_keeps_overlapping_squads_authority_and_mail_independent() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("multi-squad.db");
+        let clock = Arc::new(TestClock(AtomicI64::new(1_800_000_000_000)));
+        let (worker, worker_join) =
+            psst_relay::StoreWorker::start_with_time(&database, 32, Duration::from_secs(5), clock)
+                .unwrap();
+        let (base, server_task) = server_with_handle(psst_relay::router(worker.clone())).await;
+        let client = Client::new(&base, ClientConfig::default()).unwrap();
+        let join = |name: &str| JoinSquadRequest {
+            name: name.into(),
+            role: "worker".into(),
+            mode: AgentModeDto::Cooperative,
+            client: ClientMetadata {
+                kind: "multi-squad-test".into(),
+                hostname: None,
+                version: None,
+            },
+            mission: None,
+        };
+        for squad in ["alpha-team", "beta-team"] {
+            client
+                .create_squad(&CreateSquadRequest {
+                    name: squad.into(),
+                    mission: format!("{squad} mission"),
+                })
+                .await
+                .unwrap();
+        }
+        let alpha_alice = client.join("alpha-team", &join("alice")).await.unwrap();
+        let alpha_bob = client.join("alpha-team", &join("bob")).await.unwrap();
+        let beta_alice = client.join("beta-team", &join("alice")).await.unwrap();
+        let beta_bob = client.join("beta-team", &join("bob")).await.unwrap();
+
+        for (requested, credential) in [
+            ("beta-team", &alpha_alice.credential),
+            ("alpha-team", &beta_alice.credential),
+        ] {
+            assert!(matches!(
+                client.roster(requested, credential).await,
+                Err(Error::Api {
+                    status: 404,
+                    code: ApiErrorCode::NotFound,
+                    retryable: false
+                })
+            ));
+            assert!(matches!(
+                client
+                    .transcript(requested, MessageSequence::default(), 10, credential)
+                    .await,
+                Err(Error::Api {
+                    status: 403,
+                    code: ApiErrorCode::NotMember,
+                    retryable: false
+                })
+            ));
+        }
+
+        let same_key = "same-client-operation".to_owned();
+        let request = |body: &str| SendMessageRequest {
+            recipient: "bob".into(),
+            body: body.into(),
+            priority: MessagePriorityDto::Normal,
+            dedupe_key: same_key.clone(),
+            reply_to: None,
+            correlation_id: Some("same-correlation".into()),
+        };
+        let alpha_message = client
+            .send_with_request(&request("alpha only"), &alpha_alice.credential)
+            .await
+            .unwrap();
+        let beta_message = client
+            .send_with_request(&request("beta only"), &beta_alice.credential)
+            .await
+            .unwrap();
+        assert_ne!(alpha_message.message.id, beta_message.message.id);
+
+        let alpha_inbox = client.inbox(10, 0, &alpha_bob.credential).await.unwrap();
+        let beta_inbox = client.inbox(10, 0, &beta_bob.credential).await.unwrap();
+        assert_eq!(alpha_inbox.messages.len(), 1);
+        assert_eq!(alpha_inbox.messages[0].body, "alpha only");
+        assert_eq!(beta_inbox.messages.len(), 1);
+        assert_eq!(beta_inbox.messages[0].body, "beta only");
+
+        assert!(matches!(
+            client
+                .acknowledge(
+                    &AckMessagesRequest {
+                        message_ids: vec![beta_message.message.id.clone()],
+                    },
+                    &alpha_bob.credential,
+                )
+                .await,
+            Err(Error::Api {
+                status: 404,
+                code: ApiErrorCode::NotFound,
+                retryable: false
+            })
+        ));
+        let beta_after_foreign_ack = client.inbox(10, 0, &beta_bob.credential).await.unwrap();
+        assert_eq!(beta_after_foreign_ack.messages.len(), 1);
+        assert_eq!(
+            beta_after_foreign_ack.messages[0].id,
+            beta_message.message.id
+        );
+
+        assert!(matches!(
+            client.leave("beta-team", &alpha_alice.credential).await,
+            Err(Error::Api {
+                status: 404,
+                code: ApiErrorCode::NotFound,
+                retryable: false
+            })
+        ));
+        assert!(matches!(
+            client
+                .archive_squad("beta-team", &alpha_alice.credential)
+                .await,
+            Err(Error::Api {
+                status: 403,
+                code: ApiErrorCode::NotMember,
+                retryable: false
+            })
+        ));
+        assert_eq!(
+            client
+                .roster("beta-team", &beta_alice.credential)
+                .await
+                .unwrap()
+                .members
+                .len(),
+            2
+        );
+
         worker.stop().unwrap();
         worker_join.join().unwrap().unwrap();
         server_task.abort();

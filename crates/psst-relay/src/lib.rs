@@ -344,6 +344,7 @@ enum StoreCommand {
         oneshot::Sender<Result<SquadRecord, RepositoryError>>,
     ),
     Roster(
+        Credential,
         SquadName,
         oneshot::Sender<Result<Vec<RosterMember>, RepositoryError>>,
     ),
@@ -414,7 +415,7 @@ impl StoreCommand {
             Self::ListSquads(reply) => drop(reply),
             Self::CreateSquad(_, reply) => drop(reply),
             Self::DescribeSquad(_, reply) => drop(reply),
-            Self::Roster(_, reply) => drop(reply),
+            Self::Roster(_, _, reply) => drop(reply),
             Self::Heartbeat(_, _, _, _, reply) => drop(reply),
             Self::Resume(_, reply) => drop(reply),
             Self::Send(_, _, reply) => drop(reply),
@@ -622,8 +623,9 @@ impl StoreWorker {
                         StoreCommand::DescribeSquad(name, reply) => {
                             let _ = reply.send(store.describe_squad(&name));
                         }
-                        StoreCommand::Roster(name, reply) => {
-                            let _ = reply.send(store.roster(&name, clock.now()));
+                        StoreCommand::Roster(credential, name, reply) => {
+                            let session = session(&credential, clock.now());
+                            let _ = reply.send(store.authenticated_roster(&session, &name));
                         }
                         StoreCommand::Heartbeat(
                             credential,
@@ -799,8 +801,12 @@ impl StoreWorker {
         self.dispatch(|reply| StoreCommand::DescribeSquad(name, reply))
             .await
     }
-    pub async fn roster(&self, name: SquadName) -> Result<Vec<RosterMember>, DispatchError> {
-        self.dispatch(|reply| StoreCommand::Roster(name, reply))
+    pub async fn roster(
+        &self,
+        credential: Credential,
+        name: SquadName,
+    ) -> Result<Vec<RosterMember>, DispatchError> {
+        self.dispatch(|reply| StoreCommand::Roster(credential, name, reply))
             .await
     }
     pub async fn heartbeat(
@@ -1582,9 +1588,13 @@ async fn archive_squad(
 async fn roster(
     State(state): State<AppState>,
     AxumPath(squad): AxumPath<String>,
+    headers: HeaderMap,
 ) -> Result<Json<RosterResponse>, ApiFailure> {
     let name = parsed(SquadName::new(squad))?;
-    let members = state.worker.roster(name.clone()).await?;
+    let members = state
+        .worker
+        .roster(credential(&headers)?, name.clone())
+        .await?;
     let members = members
         .into_iter()
         .map(|value| {
@@ -2500,12 +2510,65 @@ mod tests {
         let (status, _, roster_body) = json_request(
             app.clone(),
             Request::get("/v1/squads/alpha/roster")
+                .header("authorization", format!("Bearer {credential}"))
                 .body(Body::empty())
                 .unwrap(),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(roster_body["members"][0]["name"], "alice");
+
+        let (status, _, missing_credential) = json_request(
+            app.clone(),
+            Request::get("/v1/squads/alpha/roster")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(missing_credential["error"]["code"], "not_found");
+
+        let (status, beta_headers, _) = json_request(
+            app.clone(),
+            Request::post("/v1/squads/beta/join")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"alice","role":"builder","mode":"cooperative","client":{"kind":"test"},"mission":"separate team"}"#,
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let beta_credential = beta_headers
+            .get("psst-session-credential")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        for (path, bearer) in [
+            ("/v1/squads/beta/roster", credential.as_str()),
+            ("/v1/squads/alpha/roster", beta_credential),
+        ] {
+            let (status, _, concealed) = json_request(
+                app.clone(),
+                Request::get(path)
+                    .header("authorization", format!("Bearer {bearer}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::NOT_FOUND);
+            assert_eq!(concealed["error"]["code"], "not_found");
+        }
+        let (status, _, beta_roster) = json_request(
+            app.clone(),
+            Request::get("/v1/squads/beta/roster")
+                .header("authorization", format!("Bearer {beta_credential}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(beta_roster["members"][0]["name"], "alice");
 
         let heartbeat_body = r#"{"availability":"busy","availability_source":"agent_reported"}"#;
         let (status, _, heartbeat_body) = json_request(
@@ -2599,6 +2662,7 @@ mod tests {
         let (status, _, _) = json_request(
             app.clone(),
             Request::get("/v1/squads/alpha/roster")
+                .header("authorization", format!("Bearer {credential}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -2606,7 +2670,7 @@ mod tests {
         assert_eq!(
             status,
             StatusCode::OK,
-            "archived roster remains a trusted-LAN read"
+            "archived roster remains readable to a historical member"
         );
 
         let (status, _, missing) = json_request(app, Request::post("/v1/squads/missing/join").header("content-type", "application/json").body(Body::from(r#"{"name":"bob","role":"builder","mode":"cooperative","client":{"kind":"test"}}"#)).unwrap()).await;
