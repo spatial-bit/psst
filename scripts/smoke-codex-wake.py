@@ -367,6 +367,7 @@ def harness() -> None:
     parser.add_argument("--psst-codex", type=Path, required=True)
     parser.add_argument("--psst-relay", type=Path, required=True)
     parser.add_argument("--revision", required=True)
+    parser.add_argument("--version", required=True)
     parser.add_argument("--evidence", type=Path)
     args = parser.parse_args()
     assert re.fullmatch(r"[0-9a-f]{40}", args.revision)
@@ -374,7 +375,7 @@ def harness() -> None:
         assert binary.resolve().is_file(), binary
     version = subprocess.run([args.psst_relay, "--version"], capture_output=True,
                              text=True, check=True).stdout.strip()
-    assert version == f"psst-relay 0.1.0-alpha.1 ({args.revision})", version
+    assert version == f"psst-relay {args.version} ({args.revision})", version
 
     with tempfile.TemporaryDirectory(prefix="psst-w406-", ignore_cleanup_errors=True) as name:
         root = Path(name)

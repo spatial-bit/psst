@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
+import json
 import shutil
 import stat
 import tarfile
@@ -26,6 +28,7 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--license", required=True, type=Path)
     parser.add_argument("--quickstart", required=True, type=Path)
+    parser.add_argument("--sbom", required=True, type=Path)
     parser.add_argument("--format", required=True, choices=("zip", "tar.gz"))
     return parser.parse_args()
 
@@ -89,6 +92,7 @@ def main() -> None:
         args.psst_relay,
         args.license,
         args.quickstart,
+        args.sbom,
     )
     if any(not path.is_file() for path in required_files):
         raise FileNotFoundError("binaries, license, and quickstart must be regular files")
@@ -115,18 +119,39 @@ def main() -> None:
             installed_binary.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
         shutil.copyfile(args.license, root / "LICENSE")
         shutil.copyfile(args.quickstart, root / "DOGFOOD-QUICKSTART.md")
+        shutil.copyfile(args.sbom, root / "SBOM.spdx.json")
         warning = f"""UNRELEASED DOGFOOD BUILD
 
 Revision: {args.revision}
 
 This unsigned CI development artifact is not a GitHub Release, is not supported
-for production use, and carries no compatibility promise. It has no installer,
-checksum manifest, SBOM, or signature. The relay has no TLS.
+for production use, and carries no compatibility promise. It has no installer
+and no signature. The archive includes an internal SHA-256 manifest, an SPDX SBOM,
+and a separately retained archive checksum. The relay has no TLS.
 It must never be exposed to the internet. Use it only on a trusted machine or trusted LAN.
 """
         (root / "DEVELOPMENT-BUILD").write_text(warning, encoding="utf-8", newline="\n")
         (root / "BUILD-INFO.txt").write_text(
             f"artifact={archive_stem}\nversion={args.version}\ntarget={args.target}\nrevision={args.revision}\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        manifest = {
+            "schema": "psst.dogfood-manifest.v1",
+            "version": args.version,
+            "revision": args.revision,
+            "target": args.target,
+            "files": [
+                {
+                    "path": path.name,
+                    "bytes": path.stat().st_size,
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+                for path in sorted(root.iterdir())
+            ],
+        }
+        (root / "MANIFEST.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
             newline="\n",
         )

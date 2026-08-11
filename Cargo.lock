@@ -927,7 +927,7 @@ dependencies = [
 
 [[package]]
 name = "psst-application"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "fs2",
  "libc",
@@ -951,7 +951,7 @@ dependencies = [
 
 [[package]]
 name = "psst-cli"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "psst-application",
  "psst-client",
@@ -967,7 +967,7 @@ dependencies = [
 
 [[package]]
 name = "psst-client"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "axum",
  "getrandom 0.3.4",
@@ -990,7 +990,7 @@ dependencies = [
 
 [[package]]
 name = "psst-codex"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "psst-application",
  "psst-client",
@@ -1002,7 +1002,7 @@ dependencies = [
 
 [[package]]
 name = "psst-core"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "base64",
  "getrandom 0.3.4",
@@ -1010,7 +1010,7 @@ dependencies = [
 
 [[package]]
 name = "psst-mcp"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "psst-application",
  "psst-client",
@@ -1025,14 +1025,14 @@ dependencies = [
 
 [[package]]
 name = "psst-platform-security"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "psst-protocol"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "http",
  "psst-core",
@@ -1045,7 +1045,7 @@ dependencies = [
 
 [[package]]
 name = "psst-relay"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "axum",
  "getrandom 0.3.4",
@@ -1065,7 +1065,7 @@ dependencies = [
 
 [[package]]
 name = "psst-store"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "psst-core",
  "rusqlite",

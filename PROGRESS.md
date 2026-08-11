@@ -88,6 +88,11 @@ Last reconciled: 2026-08-10
   first focused real-relay regression uses two squads with overlapping `alice`/`bob` names and the
   same client operation identifiers; it proves independent roster, recipient resolution, dedupe,
   inbox, acknowledgement, transcript, leave, and archive behavior. Native CI is pending.
+- W-602 has a local green alpha.2 packaging candidate. The dogfood archive now carries
+  `psst`, `psst-relay`, `psst-mcp`, and `psst-codex` together with an exact internal SHA-256
+  manifest, SPDX SBOM, build metadata, and a retained outer checksum. Deterministic packaging,
+  strict workspace Clippy, and the complete workspace tests pass locally; native and checkoutless
+  workflow evidence is pending.
 
 - W-308 cooperative dogfood artifacts and documentation are verified. The reviewed revision
   `c2e4dad3adf67b271a1b6a03a700711818e81503` passed all three native builds and all three
@@ -119,7 +124,6 @@ Last reconciled: 2026-08-10
 
 ## Next coordinator action
 
-Finish W-601's multi-squad isolation matrix and native review, then define the alpha.2 archive
-inventory with `psst-codex` and Channel-capable `psst-mcp`. Follow with the bundled agent-readable
-multi-team setup guide and checkoutless wake-on-mail fleet rehearsal. Do not tag or publish without
-separate exact owner authorization.
+Finish native review of W-601 and W-602, then bundle the agent-readable multi-team setup guide and
+run the checkoutless same-hub wake-on-mail fleet rehearsal. Do not tag or publish without separate
+exact owner authorization.

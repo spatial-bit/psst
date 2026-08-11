@@ -173,6 +173,46 @@ def main() -> None:
         run("package-release.py", *unix_arguments)
         assert tarball.read_bytes() == first_tarball
 
+        dogfood_revision = "b" * 40
+        dogfood = root / f"psst-dogfood-0.1.0-alpha.2-{dogfood_revision}-windows-x86_64.zip"
+        dogfood_arguments = (
+            "--psst", binary, "--psst-mcp", binary, "--psst-codex", binary,
+            "--psst-relay", binary, "--license", license_file, "--quickstart", readme,
+            "--sbom", sbom_a, "--target", "windows-x86_64",
+            "--revision", dogfood_revision, "--version", "0.1.0-alpha.2",
+            "--output", dogfood, "--format", "zip",
+        )
+        run("package-development-artifact.py", *dogfood_arguments)
+        first_dogfood = dogfood.read_bytes()
+        with zipfile.ZipFile(dogfood) as packaged:
+            dogfood_root = f"psst-dogfood-0.1.0-alpha.2-{dogfood_revision}-windows-x86_64"
+            filenames = {
+                "BUILD-INFO.txt", "DEVELOPMENT-BUILD", "DOGFOOD-QUICKSTART.md", "LICENSE",
+                "MANIFEST.json", "SBOM.spdx.json", "psst.exe", "psst-mcp.exe",
+                "psst-codex.exe", "psst-relay.exe",
+            }
+            assert set(packaged.namelist()) == {
+                f"{dogfood_root}/", *(f"{dogfood_root}/{name}" for name in filenames)
+            }
+            manifest = json.loads(packaged.read(f"{dogfood_root}/MANIFEST.json"))
+            assert manifest["schema"] == "psst.dogfood-manifest.v1"
+            assert manifest["version"] == "0.1.0-alpha.2"
+            assert manifest["revision"] == dogfood_revision
+            assert manifest["target"] == "windows-x86_64"
+            assert {item["path"] for item in manifest["files"]} == filenames - {"MANIFEST.json"}
+            for item in manifest["files"]:
+                content = packaged.read(f"{dogfood_root}/{item['path']}")
+                assert item["bytes"] == len(content)
+                assert item["sha256"] == hashlib.sha256(content).hexdigest()
+        dogfood.unlink()
+        run("package-development-artifact.py", *dogfood_arguments)
+        assert dogfood.read_bytes() == first_dogfood
+        dogfood_sum = root / "windows-x86_64.SHA256"
+        run("release-checksums.py", "--output", dogfood_sum, dogfood)
+        assert dogfood_sum.read_text(encoding="ascii") == (
+            f"{hashlib.sha256(dogfood.read_bytes()).hexdigest()}  {dogfood.name}\n"
+        )
+
         published = root / "published"
         published.mkdir()
         release_names = {"psst-v0.1.0-alpha.1-windows-x86_64.zip", "psst-v0.1.0-alpha.1-linux-x86_64.tar.gz", "psst-v0.1.0-alpha.1-macos-aarch64.tar.gz"}
