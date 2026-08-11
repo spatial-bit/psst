@@ -10,6 +10,8 @@ on:
       - "LICENSE"
       - "crates/**"
       - "scripts/package-development-artifact.py"
+      - "scripts/generate-release-sbom.py"
+      - "scripts/release-checksums.py"
       - "scripts/smoke-development-relay.py"
       - "scripts/smoke-development-cooperative.py"
       - "scripts/smoke-cooperative-reliability.py"
@@ -25,7 +27,7 @@ permissions:
   contents: read
 
 env:
-  PSST_PACKAGE_VERSION: 0.1.0-alpha.1
+  PSST_PACKAGE_VERSION: 0.1.0-alpha.2
 
 jobs:
   build:
@@ -99,6 +101,7 @@ jobs:
           --psst-codex "${{ matrix.codex }}"
           --psst-relay "${{ matrix.relay }}"
           --revision "${{ github.sha }}"
+          --version "${{ env.PSST_PACKAGE_VERSION }}"
           --evidence "w406-${{ matrix.target }}-sanitized.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
@@ -138,6 +141,11 @@ jobs:
           else
             python -c "from pathlib import Path; data=Path(r'${{ matrix.relay }}').read_bytes().lower(); assert b'sqlite3.dll' not in data"
           fi
+      - name: Generate stable SPDX SBOM
+        shell: bash
+        run: |
+          cargo metadata --locked --format-version 1 > development-metadata.json
+          python scripts/generate-release-sbom.py --metadata development-metadata.json --output SBOM.spdx.json --version "${{ env.PSST_PACKAGE_VERSION }}" --revision "${{ github.sha }}"
       - name: Package deterministic development layout
         shell: bash
         run: >-
@@ -152,7 +160,14 @@ jobs:
           --output "artifacts/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.${{ matrix.format }}"
           --license LICENSE
           --quickstart docs/dogfood-quickstart.md
+          --sbom SBOM.spdx.json
           --format "${{ matrix.format }}"
+      - name: Generate archive checksum
+        shell: bash
+        run: >-
+          python scripts/release-checksums.py
+          --output "artifacts/${{ matrix.target }}.SHA256"
+          "artifacts/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.${{ matrix.format }}"
       - name: Inspect archive
         shell: bash
         run: >-
@@ -171,7 +186,9 @@ jobs:
         if: github.event_name != 'pull_request'
         with:
           name: psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}
-          path: artifacts/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.${{ matrix.format }}
+          path: |
+            artifacts/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.${{ matrix.format }}
+            artifacts/${{ matrix.target }}.SHA256
           if-no-files-found: error
           retention-days: 14
 
@@ -213,6 +230,11 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory extracted | Out-Null
+          $expectedArchiveName = 'psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.${{ matrix.extension }}'
+          $checksumLines = @(Get-Content 'downloaded/${{ matrix.target }}.SHA256')
+          if ($checksumLines.Count -ne 1 -or $checksumLines[0] -notmatch '^([0-9a-f]{64})  ([A-Za-z0-9._-]+)$' -or $Matches[2] -ne $expectedArchiveName) { throw 'downloaded checksum file is not exact' }
+          $archivePath = Join-Path downloaded $expectedArchiveName
+          if ((Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant() -ne $Matches[1]) { throw 'downloaded archive checksum mismatch' }
           if ('${{ matrix.extension }}' -eq 'zip') {
             $archive = 'downloaded/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}.zip'
             Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -234,6 +256,8 @@ jobs:
             "$archiveRoot/DEVELOPMENT-BUILD",
             "$archiveRoot/DOGFOOD-QUICKSTART.md",
             "$archiveRoot/LICENSE",
+            "$archiveRoot/MANIFEST.json",
+            "$archiveRoot/SBOM.spdx.json",
             "$archiveRoot/psst${{ matrix.suffix }}",
             "$archiveRoot/psst-mcp${{ matrix.suffix }}",
             "$archiveRoot/psst-codex${{ matrix.suffix }}",
@@ -250,7 +274,7 @@ jobs:
           $mcp = Join-Path $root 'psst-mcp${{ matrix.suffix }}'
           $codex = Join-Path $root 'psst-codex${{ matrix.suffix }}'
           $binary = Join-Path $root 'psst-relay${{ matrix.suffix }}'
-          $expected = @('BUILD-INFO.txt','DEVELOPMENT-BUILD','DOGFOOD-QUICKSTART.md','LICENSE','psst${{ matrix.suffix }}','psst-mcp${{ matrix.suffix }}','psst-codex${{ matrix.suffix }}','psst-relay${{ matrix.suffix }}') | Sort-Object
+          $expected = @('BUILD-INFO.txt','DEVELOPMENT-BUILD','DOGFOOD-QUICKSTART.md','LICENSE','MANIFEST.json','SBOM.spdx.json','psst${{ matrix.suffix }}','psst-mcp${{ matrix.suffix }}','psst-codex${{ matrix.suffix }}','psst-relay${{ matrix.suffix }}') | Sort-Object
           $entries = Get-ChildItem -LiteralPath $root -Force -Recurse
           if ($entries | Where-Object { $_.PSIsContainer }) { throw 'archive contains an unexpected nested directory' }
           if ($entries | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) { throw 'archive contains a link or reparse point' }
@@ -259,6 +283,12 @@ jobs:
             $_.Name
           } | Sort-Object
           if (Compare-Object $expected $actual) { throw "unexpected extracted inventory: $actual" }
+          $manifest = Get-Content (Join-Path $root MANIFEST.json) -Raw | ConvertFrom-Json
+          if ($manifest.schema -ne 'psst.dogfood-manifest.v1' -or $manifest.version -ne '${{ env.PSST_PACKAGE_VERSION }}' -or $manifest.revision -ne '${{ github.sha }}' -or $manifest.target -ne '${{ matrix.target }}') { throw 'development manifest identity mismatch' }
+          foreach ($file in $manifest.files) {
+            $candidate = Join-Path $root $file.path
+            if (-not (Test-Path -LiteralPath $candidate -PathType Leaf) -or (Get-Item $candidate).Length -ne $file.bytes -or (Get-FileHash -Algorithm SHA256 $candidate).Hash.ToLowerInvariant() -ne $file.sha256) { throw "development manifest mismatch: $($file.path)" }
+          }
           if (-not $IsWindows) {
             foreach ($name in $expected) {
               $mode = [IO.File]::GetUnixFileMode((Join-Path $root $name))
@@ -379,6 +409,7 @@ jobs:
             --psst-codex (Join-Path $root 'psst-codex${{ matrix.suffix }}') `
             --psst-relay (Join-Path $root 'psst-relay${{ matrix.suffix }}') `
             --revision '${{ github.sha }}' `
+            --version '${{ env.PSST_PACKAGE_VERSION }}' `
             --evidence 'w406-clean-${{ matrix.target }}-sanitized.json'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()

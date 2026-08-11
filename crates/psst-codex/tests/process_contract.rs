@@ -5,7 +5,10 @@ fn version_is_exact_and_unknown_arguments_fail_before_activation() {
     let binary = env!("CARGO_BIN_EXE_psst-codex");
     let version = Command::new(binary).arg("--version").output().unwrap();
     assert!(version.status.success());
-    assert_eq!(version.stdout, b"psst-codex 0.1.0-alpha.1\n");
+    assert_eq!(
+        version.stdout,
+        format!("psst-codex {}\n", env!("CARGO_PKG_VERSION")).as_bytes()
+    );
     assert!(version.stderr.is_empty());
 
     let failure = Command::new(binary).arg("--unknown").output().unwrap();

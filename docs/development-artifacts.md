@@ -20,11 +20,16 @@ GitHub Actions. The archive has one same-named root directory containing exactly
 - `BUILD-INFO.txt`, with artifact name, target label, version, and revision;
 - `DEVELOPMENT-BUILD`, with the unreleased dogfood and trusted-LAN warning;
 - `DOGFOOD-QUICKSTART.md`, the concise local, LAN, CLI, profile, delivery, and MCP guide.
+- `MANIFEST.json`, with the exact internal inventory, sizes, and SHA-256 hashes;
+- `SBOM.spdx.json`, the deterministic SPDX 2.3 package inventory.
 
-Archive paths, ordering, timestamps, ownership metadata, and permissions are normalized. This makes
-the packaging layout predictable; it does not claim the compiler output or archives are
-reproducible. CI rejects extra paths, unsafe members, incorrect executable modes, workspace/secret
-canaries, wrong versions, and incomplete warnings. Native jobs smoke the relay, CLI configuration,
+The retained workflow artifact also contains `<target>.SHA256`, which hashes the inner native
+archive before extraction. This remains an unsigned development checksum, not a signature.
+
+Archive paths, ordering, timestamps, ownership metadata, and permissions are normalized. Repacking
+the same inputs is deterministic; compiler reproducibility is not claimed. CI rejects extra paths,
+unsafe members, incorrect executable modes, manifest or checksum mismatches, malformed SBOMs,
+workspace/secret canaries, wrong versions, and incomplete warnings. Native jobs smoke the relay, CLI configuration,
 MCP initialize handshake, and complete Claude and Codex wake cycles. The Claude leg proves a
 body-free Channel wake, replay before explicit acknowledgement, no duplicate wake, and restart
 reconciliation. The Codex leg proves idle-before-send, real relay mail, dynamic receive and
@@ -50,7 +55,8 @@ The relay has no TLS and must not be exposed to the internet. Non-loopback bindi
 trusted LAN and requires explicit opt-in. Keep credentials in their protected platform profile
 directory and out of logs, shared folders, prompts, and bug reports.
 
-Scheduling, keystroke injection, installers, formal checksum manifests, SBOMs, signed tags, and
-GitHub Releases are explicitly deferred. The wake adapters remain experimental preview surfaces.
+Scheduling, keystroke injection, installers, signatures, signed tags, and GitHub Releases are
+explicitly deferred. The checksum and SBOM establish artifact integrity and inventory but do not
+authenticate a publisher. The wake adapters remain experimental preview surfaces.
 These archives remain unsigned, short-retention development artifacts with no compatibility or
 support promise.

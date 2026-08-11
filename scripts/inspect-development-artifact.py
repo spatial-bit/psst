@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import re
 import stat
 import subprocess
@@ -48,6 +50,8 @@ def main() -> None:
         f"{root}/BUILD-INFO.txt",
         f"{root}/DEVELOPMENT-BUILD",
         f"{root}/DOGFOOD-QUICKSTART.md",
+        f"{root}/MANIFEST.json",
+        f"{root}/SBOM.spdx.json",
     }
     expected_members = {f"{root}/", *expected_files}
     member_payloads: dict[str, bytes] = {}
@@ -130,14 +134,51 @@ def main() -> None:
         "not a GitHub Release",
         "no compatibility promise",
         "no installer",
-        "checksum manifest",
-        "SBOM",
-        "signature",
+        "internal SHA-256 manifest",
+        "SPDX SBOM",
+        "archive checksum",
+        "no signature",
         "no TLS",
         "must never be exposed to the internet",
     )
     if any(text not in warning for text in required_warning_text):
         raise RuntimeError("development warning is incomplete")
+    manifest = json.loads(member_payloads[f"{root}/MANIFEST.json"])
+    expected_manifest_files = {
+        PurePosixPath(name).name
+        for name in expected_files
+        if not name.endswith("/MANIFEST.json")
+    }
+    manifest_files = manifest.get("files", [])
+    if (
+        manifest.get("schema") != "psst.dogfood-manifest.v1"
+        or manifest.get("version") != args.version
+        or manifest.get("revision") != args.revision
+        or manifest.get("target") != args.target
+        or {item.get("path") for item in manifest_files} != expected_manifest_files
+        or len(manifest_files) != len(expected_manifest_files)
+    ):
+        raise RuntimeError("development manifest identity or inventory mismatch")
+    payloads_by_name = {
+        PurePosixPath(name).name: payload for name, payload in member_payloads.items()
+    }
+    for item in manifest_files:
+        payload = payloads_by_name[item["path"]]
+        if (
+            item.get("bytes") != len(payload)
+            or item.get("sha256") != hashlib.sha256(payload).hexdigest()
+        ):
+            raise RuntimeError(f"development manifest hash mismatch: {item['path']}")
+    sbom = json.loads(member_payloads[f"{root}/SBOM.spdx.json"])
+    namespace_hash = hashlib.sha256(f"{args.version}:{args.revision}".encode()).hexdigest()
+    if (
+        sbom.get("spdxVersion") != "SPDX-2.3"
+        or sbom.get("name") != f"psst-{args.version}"
+        or sbom.get("documentNamespace")
+        != f"https://github.com/spatial-bit/psst/sbom/{namespace_hash}"
+        or not sbom.get("packages")
+    ):
+        raise RuntimeError("development SBOM identity mismatch")
     cli_version = run_version(args.psst)
     codex_version = run_version(args.psst_codex)
     relay_version = run_version(args.psst_relay)

@@ -4,6 +4,10 @@ This archive is an unsigned development build, not a release or a production-rea
 `DEVELOPMENT-BUILD` first. The relay has no TLS: keep the default loopback bind unless every machine
 and participant is trusted, and never expose it to the internet.
 
+Before running a binary, verify the separately retained `<target>.SHA256` against the inner archive,
+then verify the extracted files against `MANIFEST.json`. `SBOM.spdx.json` records the Rust package
+inventory. These unsigned hashes detect changes; they do not authenticate who built the archive.
+
 ## Start a disposable local relay
 
 Choose an empty sibling data directory outside the extracted archive. On Linux or macOS:
@@ -105,6 +109,6 @@ authentication.
 - Replayed inbox entries are expected until explicit acknowledgement.
 - Keep profile data out of shared folders and never copy credential files into logs or bug reports.
 
-Scheduling, keystroke injection, installers, checksum manifests, SBOMs, signed tags, and GitHub
-Releases are not included in this dogfood build. Claude Channels and Codex App Server activation
+Scheduling, keystroke injection, installers, signatures, signed tags, and GitHub Releases are not
+included in this dogfood build. Claude Channels and Codex App Server activation
 remain experimental Slice 4 preview surfaces rather than supported release features.
