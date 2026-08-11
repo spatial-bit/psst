@@ -97,6 +97,11 @@ Last reconciled: 2026-08-10
   through one relay with many squads, one profile and owning process per membership, cooperative or
   mail-awake client setup, replay/ack/reply, restart/resume, cross-squad wake isolation,
   troubleshooting, and safe cleanup. Checkoutless agent-followed evidence is pending.
+- W-604's local real-binary fleet gate passes with two squads on one relay and overlapping
+  `codex`, `claude`, and `sender` identities. Decoy mail produces zero cross-squad Claude
+  notifications and zero cross-squad Codex turns, while each decoy inbox retains its own mail.
+  Primary mail still proves wake, replay, explicit acknowledgement, restart reconciliation, and
+  clean shutdown. Native and checkoutless alpha.2 evidence is pending.
 
 - W-308 cooperative dogfood artifacts and documentation are verified. The reviewed revision
   `c2e4dad3adf67b271a1b6a03a700711818e81503` passed all three native builds and all three
