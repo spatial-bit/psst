@@ -1,8 +1,17 @@
-# Jump Start: connect two Codex agents over Tailscale
+# Jump Start: connect Codex and Claude over Tailscale
 
 Want your agents to talk to each other? Paste the prompt below into a Codex or Claude session on
-the machine that will host Psst. The agent will verify the package, start a relay on that machine's
-Tailscale address, join itself, and walk you through adding a second Codex agent on another machine.
+the machine that will host Psst. The agent will verify the package, start the one relay on that
+machine's Tailscale address, join itself, and walk you through adding a native Codex or Claude
+client on another machine.
+
+## Relay host versus client machine
+
+Machine A is the relay host. It runs the only relay and may also run an agent. Machine B is a client:
+it downloads Psst for its own OS/architecture, connects to machine A's relay origin, and never
+starts another relay or recreates the squad. Share only the relay origin, squad/mission,
+member/role plan, and profile-name convention. Each machine generates and protects its own
+credential; never copy a profile or credential between machines.
 
 This is an **unreleased dogfood workflow**. Tailscale encrypts traffic between enrolled machines,
 but Psst itself has no TLS or hostile-peer admission control. Bind only the relay host's recorded
@@ -17,7 +26,7 @@ rule unless an actual connectivity test shows that the host firewall is blocking
 Have these ready:
 
 1. Tailscale is connected on both machines.
-2. Codex is installed and authenticated on both machines.
+2. Codex and/or Claude Code is installed and authenticated on the machines that will run it.
 3. The first agent is allowed to download and extract the verified Psst artifact into a user-local
    tools directory outside any source checkout or synced notes directory.
 
@@ -28,10 +37,11 @@ artifacts workflow and report the replacement revision before continuing. The do
 ZIP; the product ZIP and checksum are inside it. Do not copy a profile or credential from one machine
 to another; each agent joins with its own profile and receives a locally protected credential.
 
-## Paste this into the first agent
+## Paste this into the relay-host agent
 
 ```text
-Set up a two-machine Codex-to-Codex Psst team for me.
+Set up a two-machine cross-platform Psst team for me: Codex on the Windows x64 relay host and Claude
+Code on an Apple Silicon macOS client.
 
 You are authorized to download and extract this exact verified Windows x86-64 dogfood artifact:
 
@@ -62,16 +72,18 @@ appear in the SBOM. Stop on any actual identity mismatch.
 
 Desired topology:
 
-- This machine is machine A: relay host and first Codex member.
-- Machine B will be a second Codex member.
+- This Windows x64 machine is machine A: the only relay host and the Codex member.
+- Machine B is an Apple Silicon macOS client-only Claude Code member. It must download the matching
+  `macos-aarch64` artifact for the same version and revision. It must not start a relay or create the
+  squad.
 - Communication travels only over our Tailscale network.
 - Run one relay serving one squad.
 - Unless an existing state conflicts, choose a unique squad name derived from today's date, use the
-  mission `Coordinate durable Codex-to-Codex work over Tailscale`, use member names derived from the
+  mission `Coordinate durable Codex-to-Claude work over Tailscale`, use member names derived from the
   two Tailscale hostnames, assign both the `coordinator` role, and use distinct profile names derived
   from squad plus hostname. Report those choices; do not stop merely to ask me to edit them.
 - Begin with cooperative MCP connectivity, prove it, and then walk me through enabling the packaged
-  psst-codex wake-on-mail harness for both durable Codex tasks.
+  correct wake-on-mail harness for each client only after cooperative MCP is proven.
 
 Safety requirements:
 
@@ -104,20 +116,26 @@ Execution sequence:
    dedicated Psst MCP registration with the absolute psst-mcp executable path, canonical relay
    origin, and unique machine-A profile.
 5. Join machine A exactly once, set availability, and verify agent_status and squad_roster.
-6. Produce a complete copy-paste prompt for Codex on machine B. Include the approved relay origin,
-   squad, mission, member name, role, unique profile, expected artifact revision, and verification
-   requirements. Tell it to configure its own MCP registration, join once, call agent_status, and
-   report readiness. Do not include or copy any credential.
+6. Produce a complete copy-paste prompt for Claude Code on machine B. Tell it to download and verify
+   the native `macos-aarch64` artifact at the exact same version/revision, read `TEAM-SETUP.md`,
+   prove relay reachability, run `claude mcp add --help`, and register the absolute local `psst-mcp`
+   path with the canonical relay origin, unique profile, `--scope local`, and stdio transport. Tell
+   it to join once or resume, then call `agent_status` and `squad_roster`. State verbatim: "Do not
+   start a relay and do not create the squad on this client." Do not include or copy any credential.
 7. After I confirm machine B is ready, verify both members in squad_roster.
 8. Guide the two agents through fixed, non-secret bidirectional messages: receive the same message
    twice before acknowledgement, explicitly acknowledge it, prove it is absent afterward, and send
    a linked reply back.
 9. Stop and restart one MCP adapter with the same profile. Prove it resumes with agent_status and
    squad_roster without calling squad_join.
-10. Configure the packaged psst-codex wake harnesses using dedicated durable Codex task IDs and
-    absolute executable paths. Keep each harness in the foreground. Prove pending mail wakes only
-    the intended agent, which then reads the authoritative inbox and acknowledges only after the
-    requested work completes.
+10. Stop each cooperative MCP owner cleanly before enabling wake; never run two adapters with one
+    profile. Configure machine A's packaged `psst-codex` with absolute paths and an existing durable
+    Codex task ID, and keep it in the foreground. Separately configure machine B's Claude Channel
+    registration with `PSST_CLAUDE_CHANNEL=enabled`; start supported interactive Claude Code with
+    the exact named server and explicit development-Channel flag, never `claude -p`. Confirm its
+    startup banner. Permission skipping is a separate explicit operator choice. Prove each wake
+    contains metadata only; the agent then calls `message_receive`, does the work, and explicitly
+    acknowledges it.
 11. Return a sanitized deployment summary with the artifact revision, relay origin, squad and
     profile mapping, verification results, and exact startup, status, shutdown, restart, and cleanup
     instructions. Redact local usernames and paths where they are not needed.
@@ -137,7 +155,8 @@ The first agent should leave you with:
 - both agents visible and online in `squad_roster`;
 - bidirectional replay-before-ack and absence-after-ack evidence;
 - restart/resume evidence without a second join; and
-- two foreground `psst-codex` harnesses that wake the correct durable Codex task for pending mail.
+- a foreground `psst-codex` harness for the Codex profile and a separately registered interactive
+  Claude Channel harness for the Claude profile, each waking only for its own pending mail.
 
 For multiple independent teams, reuse the same relay but create a distinct squad and one unique
 profile per agent-team membership. Squads isolate rosters, recipient resolution, messages,

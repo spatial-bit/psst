@@ -37,6 +37,10 @@ An unbound Channel-enabled server initializes normally. Its `squad_join` creates
 instance and starts inbox observation only after the profile binding is durable. A previously bound
 profile resumes in harnessed mode when this process becomes its owner.
 
+For operator setup, first register and prove a normal cooperative MCP child. Stop that owner
+cleanly before registering or starting the Channel-enabled child. Never run two adapters with the
+same profile. On a client-only machine, do not start another relay or recreate the squad.
+
 Configure the `psst-mcp` stdio child with the same `PSST_RELAY` and `PSST_PROFILE` values as that
 bound profile, plus:
 

@@ -37,6 +37,11 @@ Copy the returned message ID and acknowledge it explicitly:
 
 ## Trusted LAN
 
+Run exactly one relay for the deployment. The relay host may also run an agent; every other machine
+is client-only and downloads the native artifact for its own OS/architecture at the same version
+and revision. Client machines do not start relays or recreate the squad. Share the relay origin and
+non-secret squad/member/profile plan, never a profile or credential record.
+
 On a host reachable only by trusted participants, bind explicitly and opt in:
 
 ```sh
@@ -110,6 +115,14 @@ bounded and acknowledge only after work is accepted.
 
 Consult the current Claude Code MCP documentation for the client-specific configuration syntax;
 Psst deliberately does not freeze a third-party CLI grammar.
+
+On a client-only Mac, verify the native macOS artifact and relay reachability first, then run
+`claude mcp add --help` and register the absolute local `psst-mcp` path with the remote relay origin,
+a unique local profile, local scope, and stdio transport. Do not start a relay and do not create the
+squad on this client.
+
+Prove this ordinary cooperative flow before enabling wake. A wake harness replaces the cooperative
+owner; stop the current MCP child cleanly first and never run two adapters with the same profile.
 
 ## Codex cooperative setup
 
