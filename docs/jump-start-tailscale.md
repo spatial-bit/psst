@@ -6,36 +6,55 @@ Tailscale address, join itself, and walk you through adding a second Codex agent
 
 This is an **unreleased dogfood workflow**. Tailscale encrypts traffic between enrolled machines,
 but Psst itself has no TLS or hostile-peer admission control. Bind only the relay host's recorded
-Tailscale address, restrict TCP port `7341` to the intended peer's Tailscale address, and never
-expose the relay through a public interface or port forward. Any process that can reach the relay
-can ask to join a squad and receive its own credential.
+Tailscale address and never expose the relay through a public interface or port forward. Tailnet
+policy is the admission boundary: any process that policy allows to reach the relay can ask to join
+a squad and receive its own credential. Psst's `--allow-lan` flag acknowledges this non-loopback
+deployment; it does not disable Tailscale encryption. Do not create an operating-system firewall
+rule unless an actual connectivity test shows that the host firewall is blocking Tailscale traffic.
 
 ## Before you paste the prompt
 
 Have these ready:
 
 1. Tailscale is connected on both machines.
-2. You know both machines' Tailscale IPv4 addresses.
-3. Codex is installed and authenticated on both machines.
-4. The same verified Psst artifact is available on both machines. For Windows x86-64, use a
-   non-expired `psst-dogfood-0.1.0-alpha.2-<40-hex-revision>-windows-x86_64` artifact produced by a
-   successful `main` **Development artifacts** workflow.
-5. You are willing to approve one narrowly scoped firewall rule on the relay host.
+2. Codex is installed and authenticated on both machines.
+3. The first agent is allowed to download and extract the verified Psst artifact into a user-local
+   tools directory outside any source checkout or synced notes directory.
 
-The downloaded GitHub Actions artifact is an outer ZIP. Extract it, then extract the product ZIP
-inside it. The product directory contains `TEAM-SETUP.md`, `MANIFEST.json`, `SBOM.spdx.json`, the
-checksum, and all four Psst executables. Do not copy a profile or credential from one machine to
-another; each agent joins with its own profile and receives a locally protected credential.
+The prompt pins the currently verified final-main artifact and tells the agent to download it with
+GitHub CLI when possible. GitHub Actions artifacts have short retention. If the pinned artifact has
+expired, the agent must select a newer alpha.2 artifact only from a successful `main` Development
+artifacts workflow and report the replacement revision before continuing. The download is an outer
+ZIP; the product ZIP and checksum are inside it. Do not copy a profile or credential from one machine
+to another; each agent joins with its own profile and receives a locally protected credential.
 
 ## Paste this into the first agent
 
 ```text
 Set up a two-machine Codex-to-Codex Psst team for me.
 
-Use the verified Windows x86-64 Psst alpha.2 dogfood artifact available on this machine. Before
-changing anything, locate and read its bundled TEAM-SETUP.md completely. Follow that guide rather
-than inventing commands. Verify the artifact revision, checksum, manifest, inventory, SBOM identity,
-and all four binary versions. Stop on any mismatch.
+You are authorized to download and extract this exact verified Windows x86-64 dogfood artifact:
+
+- repository: spatial-bit/psst
+- workflow run: https://github.com/spatial-bit/psst/actions/runs/31456433909
+- artifact: psst-dogfood-0.1.0-alpha.2-be94226b6cacef7c655d2faab7856c2bf2032ab4-windows-x86_64
+- expected revision: be94226b6cacef7c655d2faab7856c2bf2032ab4
+
+First check whether that exact artifact is already extracted in a user-local tools directory. If it
+is absent, check `gh auth status`, then download it yourself with `gh run download 31456433909
+--repo spatial-bit/psst --name
+psst-dogfood-0.1.0-alpha.2-be94226b6cacef7c655d2faab7856c2bf2032ab4-windows-x86_64
+--dir <a-new-user-local-download-directory>`. Do not download into a source checkout, synced notes
+directory, or an existing nonempty destination. If GitHub CLI is unavailable or unauthenticated,
+open the workflow URL for me and ask me only to complete the download; do not ask me to locate files
+you have not attempted to download. If the artifact has expired, find the newest non-expired
+Windows x86-64 alpha.2 artifact from a successful `main` Development artifacts workflow, show me
+the workflow URL and exact 40-hex revision, and ask once before substituting it.
+
+Extract the outer GitHub artifact ZIP and then the product ZIP. Locate and read the bundled
+TEAM-SETUP.md completely before changing relay, profile, MCP, or Codex configuration. Follow that
+guide rather than inventing commands. Verify the product archive checksum, revision, manifest,
+inventory, SBOM identity, and all four binary versions. Stop on any mismatch.
 
 Desired topology:
 
@@ -43,19 +62,23 @@ Desired topology:
 - Machine B will be a second Codex member.
 - Communication travels only over our Tailscale network.
 - Run one relay serving one squad.
-- Ask me to approve a unique squad name and mission.
-- Use distinct profile names containing each machine's identity.
-- Ask me to approve each member name and role.
+- Unless an existing state conflicts, choose a unique squad name derived from today's date, use the
+  mission `Coordinate durable Codex-to-Codex work over Tailscale`, use member names derived from the
+  two Tailscale hostnames, assign both the `coordinator` role, and use distinct profile names derived
+  from squad plus hostname. Report those choices; do not stop merely to ask me to edit them.
 - Begin with cooperative MCP connectivity, prove it, and then walk me through enabling the packaged
   psst-codex wake-on-mail harness for both durable Codex tasks.
 
 Safety requirements:
 
-- Ask me for both machines' Tailscale IPv4 addresses and repeat the complete non-secret plan.
+- Discover machine A's Tailscale IPv4 address with the installed Tailscale CLI. Discover machine B
+  from Tailscale status when it is unambiguous; otherwise ask me only which listed Tailscale peer is
+  machine B. Repeat the complete non-secret plan before mutation.
 - Bind the relay only to machine A's exact Tailscale address with --allow-lan. Never use 0.0.0.0,
   a public interface, public Wi-Fi, or internet port forwarding.
-- Propose a firewall rule allowing TCP 7341 only from machine B's Tailscale address and obtain my
-  approval immediately before changing the firewall.
+- Treat the existing Tailscale network policy as the admission boundary. Do not create or modify a
+  Windows firewall rule preemptively. Test connectivity over Tailscale first. If the host firewall
+  blocks it, explain the evidence and ask before proposing the narrowest necessary exception.
 - Keep relay data outside the extracted package.
 - Never read, print, transmit, or copy a Psst credential record. Machine B must join and generate
   its own local credential.
@@ -68,10 +91,8 @@ Safety requirements:
 
 Execution sequence:
 
-1. Inventory the extracted package and environment, then ask for missing non-secret deployment
-   values. If the artifact is not present, identify the exact non-expired artifact from a successful
-   main Development artifacts workflow, show me its revision and workflow URL, and wait for me to
-   download it.
+1. Download when needed, extract, verify, and inventory the package and environment. Ask only for
+   information that cannot be discovered safely from the two machines or Tailscale status.
 2. Start the relay in a foreground terminal and prove both health and readiness through its
    canonical Tailscale origin.
 3. Create the approved squad once.
@@ -106,7 +127,8 @@ tag, expose the relay publicly, weaken security controls, or alter unrelated sof
 The first agent should leave you with:
 
 - one healthy relay bound to machine A's Tailscale address;
-- a firewall rule scoped to machine B's Tailscale address;
+- verified reachability governed by the existing Tailscale network policy, with no unnecessary
+  host-firewall mutation;
 - two distinct local profiles joined to one squad;
 - both agents visible and online in `squad_roster`;
 - bidirectional replay-before-ack and absence-after-ack evidence;
