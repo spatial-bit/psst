@@ -85,8 +85,24 @@ def run(script: str, *arguments: object, success: bool = True) -> subprocess.Com
     return result
 
 
+def validate_team_setup_guide_contract() -> None:
+    guide = SCRIPTS.parent / "docs" / "team-setup-agent-guide.md"
+    run("verify-team-setup-guide.py", "--guide", guide)
+    with tempfile.TemporaryDirectory(prefix="psst-team-guide-") as name:
+        broken = Path(name) / "TEAM-SETUP.md"
+        broken.write_text(
+            guide.read_text(encoding="utf-8").replace(
+                "One relay is a hub for many independent squads.",
+                "One relay exists.",
+            ),
+            encoding="utf-8",
+        )
+        run("verify-team-setup-guide.py", "--guide", broken, success=False)
+
+
 def main() -> None:
     validate_workflow_contracts()
+    validate_team_setup_guide_contract()
 
     spec = importlib.util.spec_from_file_location("release_version", SCRIPTS / "check-release-version.py")
     assert spec is not None and spec.loader is not None

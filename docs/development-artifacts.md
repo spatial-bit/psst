@@ -31,14 +31,17 @@ archive before extraction. This remains an unsigned development checksum, not a 
 Archive paths, ordering, timestamps, ownership metadata, and permissions are normalized. Repacking
 the same inputs is deterministic; compiler reproducibility is not claimed. CI rejects extra paths,
 unsafe members, incorrect executable modes, manifest or checksum mismatches, malformed SBOMs,
-workspace/secret canaries, wrong versions, and incomplete warnings. Native jobs smoke the relay, CLI configuration,
-MCP initialize handshake, and complete Claude and Codex wake cycles. The Claude leg proves a
+workspace/secret canaries, wrong versions, and incomplete warnings. Native jobs smoke the relay,
+CLI configuration, MCP initialize handshake, and complete Claude and Codex wake cycles. The Claude
+leg proves a
 body-free Channel wake, replay before explicit acknowledgement, no duplicate wake, and restart
 reconciliation. The Codex leg proves idle-before-send, real relay mail, dynamic receive and
 explicit acknowledgement through the built `psst-mcp`, one turn, zero pending mail, and clean
-shutdown. Clean-download jobs repeat exact inventory, canary, version, relay, CLI, MCP, and wake
-checks using only the downloaded archive, a separately retained test harness, and operating-system
-tools—no Rust toolchain or repository checkout.
+shutdown. A second squad reuses the same Claude and Codex member names; its decoy mail must produce
+zero notification or turn in the first squad and remain pending only for its own recipients.
+Clean-download jobs repeat exact inventory, canary, version, relay, CLI, MCP, and wake checks using
+only the downloaded archive, a separately retained test harness, and operating-system tools—no Rust
+toolchain or repository checkout.
 
 ## Download and dogfood
 

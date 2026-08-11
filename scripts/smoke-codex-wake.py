@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove an idle packaged psst-codex wakes and drains real Psst mail exactly once."""
+"""Prove packaged Claude and Codex wake only for mail in their bound squad."""
 
 from __future__ import annotations
 
@@ -20,10 +20,12 @@ import traceback
 from pathlib import Path
 from urllib.request import urlopen
 
-BODY = "w406-private-codex-wake-body"
-CLAUDE_BODY = "w406-private-claude-wake-body"
-CLAUDE_RESTART_BODY = "w406-private-claude-restart-body"
-CANARY = "w406-authorization-canary-must-not-escape"
+BODY = "w604-private-codex-wake-body"
+CLAUDE_BODY = "w604-private-claude-wake-body"
+CLAUDE_RESTART_BODY = "w604-private-claude-restart-body"
+DECOY_CODEX_BODY = "w604-decoy-codex-body"
+DECOY_CLAUDE_BODY = "w604-decoy-claude-body"
+CANARY = "w604-authorization-canary-must-not-escape"
 ACTIVE: list[subprocess.Popen] = []
 
 
@@ -46,7 +48,7 @@ def isolated_env(root: Path, origin: str, profile: str) -> dict[str, str]:
         "PSST_PROFILE": profile,
         "PSST_HEARTBEAT_INTERVAL_SECONDS": "5",
         "PSST_LEASE_SECONDS": "15",
-        "PSST_W406_AUTHORIZATION_CANARY": CANARY,
+        "PSST_W604_AUTHORIZATION_CANARY": CANARY,
     })
     return env
 
@@ -92,7 +94,7 @@ class Mcp:
         self.notifications: list[dict] = []
         response = self.request("initialize", {
             "protocolVersion": "2025-11-25", "capabilities": {},
-            "clientInfo": {"name": "w406-packaged-wake", "version": "0"},
+            "clientInfo": {"name": "w604-packaged-fleet", "version": "0"},
         })
         assert response["result"]["serverInfo"]["name"] == "psst-mcp"
         self.initialization = response["result"]
@@ -195,8 +197,8 @@ def fake_app_server() -> None:
     assert json.dumps(str(mcp_path)) in override
     assert "PSST_PROFILE=" in override and "PSST_RELAY=" in override
     mcp = Mcp(mcp_path, os.environ.copy())
-    evidence_path = Path(os.environ["PSST_W406_FAKE_EVIDENCE"])
-    thread_id, turn_id = "thr_w406", "turn_w406"
+    evidence_path = Path(os.environ["PSST_W604_FAKE_EVIDENCE"])
+    thread_id, turn_id = "thr_w604", "turn_w604"
 
     def send(value: dict) -> None:
         print(json.dumps(value, separators=(",", ":")), flush=True)
@@ -304,21 +306,28 @@ def run_claude_channel_gate(
     root: Path,
     origin: str,
     sender: Mcp,
-) -> tuple[list[str], str]:
+    decoy_sender: Mcp,
+) -> tuple[list[str], str, str]:
     channel_root = root / "claude"
     channel_root.mkdir()
-    channel_env = isolated_env(channel_root, origin, "w406-claude")
+    channel_env = isolated_env(channel_root, origin, "w604-primary-claude")
     channel_env["PSST_CLAUDE_CHANNEL"] = "enabled"
     channel = Mcp(mcp_binary, channel_env)
     assert channel.initialization["capabilities"]["experimental"]["claude/channel"] == {}
     channel.call("squad_join", {
-        "squad": "w406-wake", "name": "claude", "role": "worker", "mission": None,
+        "squad": "w604-primary", "name": "claude", "role": "worker", "mission": None,
     })
     credential, secret = credential_secret(channel_root)
     assert [path for path in channel_root.rglob("*") if path.is_file() and secret.encode() in safe_bytes(path)] == [credential]
+    decoy = decoy_sender.call("message_send", {
+        "recipient": "claude", "body": DECOY_CLAUDE_BODY, "priority": "high",
+        "reply_to": None, "correlation_id": "w604-decoy-claude",
+    })
+    decoy_id = decoy["message"]["id"]
+    channel.assert_no_notification("notifications/claude/channel", 2)
     sent = sender.call("message_send", {
         "recipient": "claude", "body": CLAUDE_BODY, "priority": "high",
-        "reply_to": None, "correlation_id": "w406-claude-wake",
+        "reply_to": None, "correlation_id": "w604-primary-claude-wake",
     })
     first_id = sent["message"]["id"]
     wake = channel.wait_notification("notifications/claude/channel")
@@ -343,7 +352,7 @@ def run_claude_channel_gate(
 
     restarted = sender.call("message_send", {
         "recipient": "claude", "body": CLAUDE_RESTART_BODY, "priority": "normal",
-        "reply_to": None, "correlation_id": "w406-claude-restart",
+        "reply_to": None, "correlation_id": "w604-primary-claude-restart",
     })
     restart_id = restarted["message"]["id"]
     channel = Mcp(mcp_binary, channel_env)
@@ -357,7 +366,7 @@ def run_claude_channel_gate(
     assert channel.call("message_acknowledge", {"message_ids": [restart_id]})["acknowledged_ids"] == [restart_id]
     channel.call("squad_leave", {})
     channel.stop()
-    return [first_id, restart_id], secret
+    return [first_id, restart_id], secret, decoy_id
 
 
 def harness() -> None:
@@ -377,7 +386,7 @@ def harness() -> None:
                              text=True, check=True).stdout.strip()
     assert version == f"psst-relay {args.version} ({args.revision})", version
 
-    with tempfile.TemporaryDirectory(prefix="psst-w406-", ignore_cleanup_errors=True) as name:
+    with tempfile.TemporaryDirectory(prefix="psst-w604-", ignore_cleanup_errors=True) as name:
         root = Path(name)
         port = reserve_port()
         origin = f"http://127.0.0.1:{port}"
@@ -391,20 +400,52 @@ def harness() -> None:
         wait_until(lambda: ready(origin), "relay did not become ready")
 
         receiver_root, sender_root = root / "receiver", root / "sender"
-        receiver_root.mkdir(); sender_root.mkdir()
-        receiver_env = isolated_env(receiver_root, origin, "w406-codex")
-        sender_env = isolated_env(sender_root, origin, "w406-sender")
-        cli(args.psst, receiver_env, "squad", "create", "w406-wake", "--mission", "packaged wake proof")
-        cli(args.psst, receiver_env, "squad", "join", "w406-wake", "--name", "codex", "--role", "worker")
+        decoy_sender_root = root / "decoy-sender"
+        decoy_codex_root, decoy_claude_root = root / "decoy-codex", root / "decoy-claude"
+        for profile_root in (
+            receiver_root, sender_root, decoy_sender_root, decoy_codex_root, decoy_claude_root,
+        ):
+            profile_root.mkdir()
+        receiver_env = isolated_env(receiver_root, origin, "w604-primary-codex")
+        sender_env = isolated_env(sender_root, origin, "w604-primary-sender")
+        decoy_sender_env = isolated_env(decoy_sender_root, origin, "w604-decoy-sender")
+        decoy_codex_env = isolated_env(decoy_codex_root, origin, "w604-decoy-codex")
+        decoy_claude_env = isolated_env(decoy_claude_root, origin, "w604-decoy-claude")
+        cli(args.psst, receiver_env, "squad", "create", "w604-primary", "--mission", "primary wake proof")
+        cli(args.psst, receiver_env, "squad", "create", "w604-decoy", "--mission", "decoy isolation proof")
+        cli(args.psst, receiver_env, "squad", "join", "w604-primary", "--name", "codex", "--role", "worker")
+        cli(args.psst, decoy_codex_env, "squad", "join", "w604-decoy", "--name", "codex", "--role", "worker")
+        cli(args.psst, decoy_claude_env, "squad", "join", "w604-decoy", "--name", "claude", "--role", "worker")
+        decoy_claude_credential, decoy_claude_secret = credential_secret(decoy_claude_root)
+        assert [
+            path for path in decoy_claude_root.rglob("*")
+            if path.is_file() and decoy_claude_secret.encode() in safe_bytes(path)
+        ] == [decoy_claude_credential]
         sender = Mcp(args.psst_mcp.resolve(), sender_env)
-        sender.call("squad_join", {"squad": "w406-wake", "name": "sender", "role": "sender", "mission": None})
-        claude_message_ids, claude_secret = run_claude_channel_gate(
-            args.psst_mcp.resolve(), root, origin, sender,
+        sender.call("squad_join", {"squad": "w604-primary", "name": "sender", "role": "sender", "mission": None})
+        decoy_sender = Mcp(args.psst_mcp.resolve(), decoy_sender_env)
+        decoy_sender.call("squad_join", {"squad": "w604-decoy", "name": "sender", "role": "sender", "mission": None})
+        claude_message_ids, claude_secret, decoy_claude_id = run_claude_channel_gate(
+            args.psst_mcp.resolve(), root, origin, sender, decoy_sender,
         )
+        decoy_claude = Mcp(args.psst_mcp.resolve(), decoy_claude_env)
+        decoy_claude_mail = decoy_claude.call("message_receive", {
+            "limit": 20, "wait_seconds": 0, "acknowledge_ids": [],
+        })
+        assert [message["id"] for message in decoy_claude_mail["messages"]] == [decoy_claude_id]
+        assert decoy_claude.call("message_acknowledge", {
+            "message_ids": [decoy_claude_id],
+        })["acknowledged_ids"] == [decoy_claude_id]
+        decoy_claude.call("squad_leave", {})
+        decoy_claude.stop()
         receiver_credential, receiver_secret = credential_secret(receiver_root)
         sender_credential, sender_secret = credential_secret(sender_root)
+        decoy_sender_credential, decoy_sender_secret = credential_secret(decoy_sender_root)
+        decoy_codex_credential, decoy_codex_secret = credential_secret(decoy_codex_root)
         assert [path for path in receiver_root.rglob("*") if path.is_file() and receiver_secret.encode() in safe_bytes(path)] == [receiver_credential]
         assert [path for path in sender_root.rglob("*") if path.is_file() and sender_secret.encode() in safe_bytes(path)] == [sender_credential]
+        assert [path for path in decoy_sender_root.rglob("*") if path.is_file() and decoy_sender_secret.encode() in safe_bytes(path)] == [decoy_sender_credential]
+        assert [path for path in decoy_codex_root.rglob("*") if path.is_file() and decoy_codex_secret.encode() in safe_bytes(path)] == [decoy_codex_credential]
 
         fake_evidence = root / "fake-evidence.jsonl"
         fake_error = root / "fake-error.txt"
@@ -415,8 +456,8 @@ def harness() -> None:
             "PSST_CODEX_MCP_COMMAND": str(args.psst_mcp.resolve()),
             "PSST_CODEX_CREATE_THREAD": "1",
             "PSST_CODEX_THREAD_RECORD": str((root / "thread-id").resolve()),
-            "PSST_W406_FAKE_EVIDENCE": str(fake_evidence.resolve()),
-            "PSST_W406_FAKE_ERROR": str(fake_error.resolve()),
+            "PSST_W604_FAKE_EVIDENCE": str(fake_evidence.resolve()),
+            "PSST_W604_FAKE_ERROR": str(fake_error.resolve()),
         })
         creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
         codex = subprocess.Popen([args.psst_codex.resolve()], env=codex_env, stdin=subprocess.DEVNULL,
@@ -425,8 +466,16 @@ def harness() -> None:
         ACTIVE.append(codex)
         time.sleep(2)
         assert codex.poll() is None, "psst-codex exited before mail arrived"
+        decoy_codex = decoy_sender.call("message_send", {
+            "recipient": "codex", "body": DECOY_CODEX_BODY, "priority": "normal",
+            "reply_to": None, "correlation_id": "w604-decoy-codex",
+        })
+        decoy_codex_id = decoy_codex["message"]["id"]
+        time.sleep(3)
+        assert codex.poll() is None, "psst-codex exited while unrelated squad mail arrived"
+        assert not fake_evidence.exists(), "unrelated squad mail woke the Codex harness"
         sent = sender.call("message_send", {"recipient": "codex", "body": BODY, "priority": "normal",
-                                             "reply_to": None, "correlation_id": "w406-packaged-wake"})
+                                             "reply_to": None, "correlation_id": "w604-primary-codex-wake"})
         try:
             wait_until(lambda: fake_error.is_file() or (fake_evidence.is_file() and len(fake_evidence.read_text(encoding="utf-8").splitlines()) == 1),
                        "idle Codex harness did not wake and acknowledge", 30)
@@ -449,25 +498,47 @@ def harness() -> None:
         })["pending_count"] == 0
         receiver.call("squad_leave", {})
         receiver.stop()
+        decoy_codex_receiver = Mcp(args.psst_mcp.resolve(), decoy_codex_env)
+        decoy_codex_mail = decoy_codex_receiver.call("message_receive", {
+            "limit": 20, "wait_seconds": 0, "acknowledge_ids": [],
+        })
+        assert [message["id"] for message in decoy_codex_mail["messages"]] == [decoy_codex_id]
+        assert decoy_codex_receiver.call("message_acknowledge", {
+            "message_ids": [decoy_codex_id],
+        })["acknowledged_ids"] == [decoy_codex_id]
+        decoy_codex_receiver.call("squad_leave", {})
+        decoy_codex_receiver.stop()
         sender.call("squad_leave", {})
         sender.stop()
+        decoy_sender.call("squad_leave", {})
+        decoy_sender.stop()
         relay.terminate(); relay.wait(10); ACTIVE.remove(relay); relay_handle.close()
         logs = relay_log.read_text(encoding="utf-8", errors="replace")
         evidence = {"revision": args.revision, "binary_version": version,
                     "claude_channel_wakes": 2, "claude_message_ids": claude_message_ids,
                     "codex_wake_turns": 1, "codex_message_id": proof["message_id"], "pending_after_ack": 0,
+                    "squads": 2, "cross_squad_claude_wakes": 0, "cross_squad_codex_wakes": 0,
+                    "decoy_message_ids": [decoy_claude_id, decoy_codex_id],
                     "codex_stdout": [], "codex_stderr": []}
         encoded = json.dumps(evidence, indent=2)
         for label, forbidden in (("codex body", BODY), ("claude body", CLAUDE_BODY),
                                  ("claude restart body", CLAUDE_RESTART_BODY), ("canary", CANARY),
+                                 ("decoy codex body", DECOY_CODEX_BODY),
+                                 ("decoy claude body", DECOY_CLAUDE_BODY),
                                  ("receiver authorization", receiver_secret), ("sender authorization", sender_secret),
-                                 ("claude authorization", claude_secret)):
+                                 ("claude authorization", claude_secret),
+                                 ("decoy sender authorization", decoy_sender_secret),
+                                 ("decoy codex authorization", decoy_codex_secret),
+                                 ("decoy claude authorization", decoy_claude_secret)):
             assert forbidden not in logs and forbidden not in encoded, f"{label} escaped into observable evidence"
-        for profile_root in (receiver_root, sender_root, root / "claude"):
+        for profile_root in (
+            receiver_root, sender_root, root / "claude", decoy_sender_root,
+            decoy_codex_root, decoy_claude_root,
+        ):
             assert not any(CANARY.encode() in safe_bytes(path) for path in profile_root.rglob("*") if path.is_file())
         if args.evidence:
             args.evidence.write_text(encoded + "\n", encoding="utf-8")
-        print("W-406 packaged wake gate passed: Claude wake/replay/ack/restart and Codex idle wake/one turn/ack/clean shutdown")
+        print("W-604 fleet gate passed: two squads, overlapping identities, isolated Claude and Codex wake, replay/ack/restart, clean shutdown")
 
 
 def safe_bytes(path: Path) -> bytes:
@@ -491,7 +562,7 @@ if __name__ == "__main__":
             try:
                 fake_app_server()
             except Exception:
-                diagnostic = os.environ.get("PSST_W406_FAKE_ERROR")
+                diagnostic = os.environ.get("PSST_W604_FAKE_ERROR")
                 if diagnostic:
                     Path(diagnostic).write_text(traceback.format_exc(), encoding="utf-8")
                 raise

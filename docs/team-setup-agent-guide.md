@@ -229,7 +229,8 @@ For each squad, perform this acceptance journey with fixed, non-secret test bodi
 
 To prove multiple teams are independent, use overlapping member names in two squads. Send a unique
 canary body in squad A and confirm squad B has no pending mail and no wake. Repeat in the opposite
-direction. Never paste credential values into the test.
+direction. The required cross-squad result is zero notification or turn in the unrelated squad.
+Never paste credential values into the test.
 
 Retrieval is deliberately not acknowledgement. A message may replay until its ID is explicitly
 acknowledged. If a send reports `outcome_unknown`, do not blindly repeat it from a new CLI process;

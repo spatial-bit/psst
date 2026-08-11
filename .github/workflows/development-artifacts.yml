@@ -17,6 +17,7 @@ on:
       - "scripts/smoke-cooperative-reliability.py"
       - "scripts/smoke-codex-wake.py"
       - "scripts/inspect-development-artifact.py"
+      - "scripts/verify-team-setup-guide.py"
       - "scripts/extract-development-artifact.py"
       - "docs/development-artifacts.md"
       - "docs/dogfood-quickstart.md"
@@ -103,7 +104,7 @@ jobs:
           --psst-relay "${{ matrix.relay }}"
           --revision "${{ github.sha }}"
           --version "${{ env.PSST_PACKAGE_VERSION }}"
-          --evidence "w406-${{ matrix.target }}-sanitized.json"
+          --evidence "w604-${{ matrix.target }}-sanitized.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
@@ -114,8 +115,8 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: w406-${{ matrix.target }}-sanitized-evidence
-          path: w406-${{ matrix.target }}-sanitized.json
+          name: w604-${{ matrix.target }}-sanitized-evidence
+          path: w604-${{ matrix.target }}-sanitized.json
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -128,8 +129,10 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name != 'pull_request'
         with:
-          name: w406-${{ matrix.target }}-harness
-          path: scripts/smoke-codex-wake.py
+          name: w604-${{ matrix.target }}-harness
+          path: |
+            scripts/smoke-codex-wake.py
+            scripts/verify-team-setup-guide.py
           if-no-files-found: error
           retention-days: 14
       - name: Verify bundled SQLite dependency boundary
@@ -147,6 +150,9 @@ jobs:
         run: |
           cargo metadata --locked --format-version 1 > development-metadata.json
           python scripts/generate-release-sbom.py --metadata development-metadata.json --output SBOM.spdx.json --version "${{ env.PSST_PACKAGE_VERSION }}" --revision "${{ github.sha }}"
+      - name: Verify agent-readable team setup contract
+        shell: bash
+        run: python scripts/verify-team-setup-guide.py --guide docs/team-setup-agent-guide.md
       - name: Package deterministic development layout
         shell: bash
         run: >-
@@ -226,7 +232,7 @@ jobs:
           path: harness
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: w406-${{ matrix.target }}-harness
+          name: w604-${{ matrix.target }}-harness
           path: harness
       - name: Extract downloaded artifact
         shell: pwsh
@@ -406,6 +412,7 @@ jobs:
         shell: pwsh
         run: |
           $root = Resolve-Path 'extracted/psst-dogfood-${{ env.PSST_PACKAGE_VERSION }}-${{ github.sha }}-${{ matrix.target }}'
+          python harness/verify-team-setup-guide.py --guide (Join-Path $root 'TEAM-SETUP.md')
           python harness/smoke-codex-wake.py `
             --psst (Join-Path $root 'psst${{ matrix.suffix }}') `
             --psst-mcp (Join-Path $root 'psst-mcp${{ matrix.suffix }}') `
@@ -413,11 +420,11 @@ jobs:
             --psst-relay (Join-Path $root 'psst-relay${{ matrix.suffix }}') `
             --revision '${{ github.sha }}' `
             --version '${{ env.PSST_PACKAGE_VERSION }}' `
-            --evidence 'w406-clean-${{ matrix.target }}-sanitized.json'
+            --evidence 'w604-clean-${{ matrix.target }}-sanitized.json'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: w406-clean-${{ matrix.target }}-sanitized-evidence
-          path: w406-clean-${{ matrix.target }}-sanitized.json
+          name: w604-clean-${{ matrix.target }}-sanitized-evidence
+          path: w604-clean-${{ matrix.target }}-sanitized.json
           if-no-files-found: error
           retention-days: 14
