@@ -1,8 +1,8 @@
 # Progress
 
-Current slice: 6 — mail-awake fleet dogfood
-Current gate: W-601 multi-squad authority and routing contract
-Last reconciled: 2026-08-10
+Current slice: 6 — mail-awake fleet dogfood (verified)
+Current gate: complete at `a52d0219bcd0aff4cbafc9faab5c9bc9ec7fbc50`
+Last reconciled: 2026-08-11
 
 ## Verified
 
@@ -83,25 +83,16 @@ Last reconciled: 2026-08-10
 
 ## Ready
 
-- Slice 6 is active as the `v0.1.0-alpha.2` product milestone. W-601 formalizes one relay as a
-  multi-squad hub, one profile per squad membership, and squad-scoped roster/mail/authority. The
-  first focused real-relay regression uses two squads with overlapping `alice`/`bob` names and the
-  same client operation identifiers; it proves independent roster, recipient resolution, dedupe,
-  inbox, acknowledgement, transcript, leave, and archive behavior. Native CI is pending.
-- W-602 has a local green alpha.2 packaging candidate. The dogfood archive now carries
-  `psst`, `psst-relay`, `psst-mcp`, and `psst-codex` together with an exact internal SHA-256
-  manifest, SPDX SBOM, build metadata, and a retained outer checksum. Deterministic packaging,
-  strict workspace Clippy, and the complete workspace tests pass locally; native and checkoutless
-  workflow evidence is pending.
-- W-603 has a bundled agent-readable setup candidate. `TEAM-SETUP.md` walks a Codex or Claude agent
-  through one relay with many squads, one profile and owning process per membership, cooperative or
-  mail-awake client setup, replay/ack/reply, restart/resume, cross-squad wake isolation,
-  troubleshooting, and safe cleanup. Checkoutless agent-followed evidence is pending.
-- W-604's local real-binary fleet gate passes with two squads on one relay and overlapping
-  `codex`, `claude`, and `sender` identities. Decoy mail produces zero cross-squad Claude
-  notifications and zero cross-squad Codex turns, while each decoy inbox retains its own mail.
-  Primary mail still proves wake, replay, explicit acknowledgement, restart reconciliation, and
-  clean shutdown. Native and checkoutless alpha.2 evidence is pending.
+- Slice 6's `v0.1.0-alpha.2` milestone is verified at exact main revision
+  `a52d0219bcd0aff4cbafc9faab5c9bc9ec7fbc50`. PRs
+  [#16](https://github.com/spatial-bit/psst/pull/16) through
+  [#19](https://github.com/spatial-bit/psst/pull/19) merged with preserved history. Standard CI
+  passed the complete workspace gate on Windows, Ubuntu, and macOS in
+  [workflow 31454840057](https://github.com/spatial-bit/psst/actions/runs/31454840057). Native
+  Windows x86-64, Linux x86-64, and macOS ARM64 packages plus all three checkoutless/no-Rust
+  manifest, checksum, SBOM, no-secret, guide-contract, multi-team, Claude Channel, and Codex App
+  Server rehearsals passed in
+  [workflow 31454840050](https://github.com/spatial-bit/psst/actions/runs/31454840050).
 
 - W-308 cooperative dogfood artifacts and documentation are verified. The reviewed revision
   `c2e4dad3adf67b271a1b6a03a700711818e81503` passed all three native builds and all three
@@ -133,6 +124,5 @@ Last reconciled: 2026-08-10
 
 ## Next coordinator action
 
-Finish native review of W-601 and W-602, then bundle the agent-readable multi-team setup guide and
-run the checkoutless same-hub wake-on-mail fleet rehearsal. Do not tag or publish without separate
-exact owner authorization.
+Relocate the Psst development repository outside the Obsidian vault at a clean Git boundary before
+starting the next product slice. Do not tag or publish without separate exact owner authorization.

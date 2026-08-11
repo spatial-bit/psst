@@ -1,6 +1,6 @@
 # W-601: Multi-squad authority and routing contract
 
-Status: active
+Status: verified at exact main revision `a52d0219bcd0aff4cbafc9faab5c9bc9ec7fbc50`
 
 ## Objective
 
@@ -27,4 +27,8 @@ cross-squad selection path.
   archived historical roster access.
 - Canonical OpenAPI generation, `cargo fmt --check`, strict workspace Clippy, and the complete
   workspace test suite pass locally on Windows.
-- Native Windows, Ubuntu, and macOS CI plus wake-observation isolation remain pending.
+- Merged through PR [#16](https://github.com/spatial-bit/psst/pull/16). The exact final main revision
+  passed the complete workspace suite on Windows, Ubuntu, and macOS in
+  [workflow 31454840057](https://github.com/spatial-bit/psst/actions/runs/31454840057), and the
+  multi-squad contract is exercised again inside every native and checkoutless fleet rehearsal in
+  [workflow 31454840050](https://github.com/spatial-bit/psst/actions/runs/31454840050).
