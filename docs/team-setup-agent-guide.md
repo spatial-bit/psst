@@ -58,26 +58,29 @@ SHA-256 tool, then compare every extracted file to `MANIFEST.json`. Confirm that
 - `BUILD-INFO.txt` has the expected version, 40-hex revision, and target;
 - `MANIFEST.json` has schema `psst.dogfood-manifest.v1` and the same identity;
 - every listed file has the recorded byte count and SHA-256 hash;
-- `SBOM.spdx.json` has the same version and revision identity;
+- `SBOM.spdx.json` has the same version and its `documentNamespace` ends in
+  `SHA256("<version>:<revision>")`; the revision is deliberately bound through this digest rather
+  than repeated literally;
 - `psst`, `psst-relay`, `psst-mcp`, and `psst-codex` all exist (`.exe` on Windows).
 
-Then run the directly executable version commands:
+Then run the directly executable CLI and harness version commands:
 
 ```powershell
 .\psst.exe --version
-.\psst-mcp.exe --version
 .\psst-codex.exe --version
 .\psst-relay.exe --version
 ```
 
 ```sh
 ./psst --version
-./psst-mcp --version
 ./psst-codex --version
 ./psst-relay --version
 ```
 
-All versions must agree with `BUILD-INFO.txt`. Stop if they do not.
+These versions must agree with `BUILD-INFO.txt`. `psst-mcp` is a protocol-only stdio server, not a
+human CLI; do not run it with `--version`. Verify its bytes through `MANIFEST.json`, then require its
+MCP `initialize` response to contain `serverInfo.name` equal to `psst-mcp` and
+`serverInfo.version` equal to the package version. Stop if any identity check does not match.
 
 ## 4. Start one relay hub
 

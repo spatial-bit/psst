@@ -54,7 +54,11 @@ the workflow URL and exact 40-hex revision, and ask once before substituting it.
 Extract the outer GitHub artifact ZIP and then the product ZIP. Locate and read the bundled
 TEAM-SETUP.md completely before changing relay, profile, MCP, or Codex configuration. Follow that
 guide rather than inventing commands. Verify the product archive checksum, revision, manifest,
-inventory, SBOM identity, and all four binary versions. Stop on any mismatch.
+inventory, and SBOM identity. Run `--version` only for psst, psst-relay, and psst-codex. psst-mcp is
+a protocol-only stdio server: verify its manifest hash before use and its name/version in the MCP
+initialize response after registration. The SBOM binds revision through the SHA-256 digest of
+`<version>:<revision>` at the end of `documentNamespace`; the literal revision is not expected to
+appear in the SBOM. Stop on any actual identity mismatch.
 
 Desired topology:
 

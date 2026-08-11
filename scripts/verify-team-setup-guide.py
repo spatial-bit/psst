@@ -31,8 +31,11 @@ REQUIRED_CONTRACT = (
     "one profile and one owning adapter process",
     "MANIFEST.json",
     "SBOM.spdx.json",
+    'SHA256("<version>:<revision>")',
     ".\\psst.exe --version",
     "./psst --version",
+    "psst-mcp` is a protocol-only stdio server",
+    "serverInfo.version",
     ".\\psst.exe relay start --data-dir $RelayData",
     "./psst relay start --data-dir \"$RELAY_DATA\"",
     "--allow-lan",
@@ -81,6 +84,8 @@ def main() -> None:
         text,
     ):
         raise RuntimeError("team setup guide contains credential-shaped material")
+    if ".\\psst-mcp.exe --version" in text or "./psst-mcp --version" in text:
+        raise RuntimeError("team setup guide invokes protocol-only psst-mcp as a human CLI")
 
 
 if __name__ == "__main__":
