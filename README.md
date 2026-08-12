@@ -38,6 +38,8 @@ into the relay-host agent and let it verify Psst, start the one relay, join itse
 through adding a native client-only agent on the other machine. The
 [two-machine Tailscale Jump Start](docs/jump-start-tailscale.md) includes the full
 copy-paste prompt, trust-boundary warnings, wake-on-mail setup, and acceptance test.
+For an operator-oriented walkthrough with commands for the most common cross-platform pairing, use
+the [Windows Codex + macOS Claude tutorial](docs/tutorial-windows-codex-macos-claude.md).
 
 ## Security boundary
 

@@ -165,3 +165,5 @@ accidental cross-team traffic; it is not hostile multi-tenant isolation.
 
 For the complete operating contract and troubleshooting steps, read
 [`team-setup-agent-guide.md`](team-setup-agent-guide.md).
+For a shorter scenario-based walkthrough, see
+[`tutorial-windows-codex-macos-claude.md`](tutorial-windows-codex-macos-claude.md).
