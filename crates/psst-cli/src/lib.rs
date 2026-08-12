@@ -786,6 +786,7 @@ async fn wait_for_successful_signal<T, E>(signal: impl Future<Output = Result<T,
     }
 }
 
+#[cfg(any(windows, test))]
 async fn wait_for_present_signal<T>(signal: impl Future<Output = Option<T>>) {
     if signal.await.is_none() {
         std::future::pending::<()>().await;
