@@ -157,4 +157,3 @@ not hostile multi-tenant isolation.
 Close clients before reusing their profiles. Stop the foreground relay with Ctrl+C. To permanently
 leave, use `squad_leave` from the owning agent or the CLI `squad leave` command. Removing relay data
 or profile directories is destructive and requires separate approval.
-
