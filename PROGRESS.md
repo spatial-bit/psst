@@ -59,7 +59,8 @@ Last reconciled: 2026-08-11
   relay-host setup agent generates one non-secret `PSST-TEAM-HANDOFF.md`; the client setup agent
   consumes it without manual value substitution. The journey keeps a Claude Channel session and a
   durable Codex App Server task running, then proves automatically surfaced mail in both directions
-  without application-level model polling.
+  without application-level model polling. Both prompts bootstrap from any current directory into
+  one documented platform-native Psst home rather than searching for a repository checkout.
 
 - W-401 defines the client-neutral activation boundary and dependency-ordered Slice 4 plan. The
   shared engine owns coalescing, reconciliation, turn occupancy, retry/backoff, and shutdown; Claude

@@ -30,6 +30,64 @@ plan in the handoff file. They also create local launcher scripts, so later star
 reconstructing a command. Psst credentials are created locally on each machine and never enter the
 handoff file or launcher scripts.
 
+## Where Psst puts things
+
+You may start the setup agent from any directory. It must not treat the current working directory
+as a Psst checkout or search it for documentation. Its first state-changing action is to show you
+and create one conventional **Psst home**:
+
+| System | Psst home |
+|---|---|
+| Windows | `%LOCALAPPDATA%\Psst\dogfood` |
+| macOS | `$HOME/Library/Application Support/psst/dogfood` |
+| Linux | `${XDG_STATE_HOME:-$HOME/.local/state}/psst/dogfood` |
+
+All operator-visible setup material is contained below that root:
+
+```text
+dogfood/
+  downloads/       downloaded wrappers, archives, and checksums
+  packages/        verified, revision-keyed extracted native packages
+  operator/
+    handoff/        PSST-TEAM-HANDOFF.md
+    launchers/      complete relay, Codex, or Claude start scripts
+    logs/           setup and foreground-process diagnostics
+    state/          non-secret deployment plan and Codex thread record
+  relay-data/       relay database, only on the relay host
+```
+
+The setup agent changes into this directory before downloading or generating anything and writes a
+plain `operator/SETUP-STATUS.md` activity record there. It does not clone the source repository or
+create task files in whatever directory happened to be open when you pasted the prompt.
+
+Three deliberate exceptions live outside Psst home:
+
+- Psst's protected profile and credential records use the operating system's native application
+  data and credential-security locations. The setup agent never reads or copies their contents.
+- Codex and Claude keep their own authentication and application state in their own managed
+  locations. Psst does not copy or modify account credentials.
+- A Tailscale file transfer may initially arrive in Tailscale's receive location; the setup agent
+  moves the non-secret handoff file into this machine's `operator/handoff` directory.
+
+The generated MCP configuration is process-scoped and stored under `operator/state`; this
+quickstart does not add a permanent global MCP registration.
+
+### What the first minute should look like
+
+The setup agent should begin with a short report like:
+
+```text
+Detected: Windows x86-64
+Psst home: C:\Users\<you>\AppData\Local\Psst\dogfood
+Planned directories: downloads, packages, operator, relay-data
+Read-only checks next: Tailscale, Codex, download tools, existing Psst home
+Approval needed: create only the listed Psst home directories
+```
+
+It may keep an internal task list, but any file-based tracking belongs in
+`operator/SETUP-STATUS.md`. “Let me explore the working directory and find the referenced files” is
+not the expected behavior. If you see that, stop the agent and repaste the latest prompt below.
+
 ## Before you start
 
 - Both machines are already connected to the same trusted Tailscale network.
@@ -46,12 +104,15 @@ cooperative isolation rather than hostile multi-tenant security.
 ## Prompt A — relay host and Codex
 
 Paste this entire prompt into a Codex or Claude setup session on the machine that will host the
-relay. Let it perform read-only discovery first. It must show you any state-changing or
-configuration command before running it and honor the client's normal approval flow.
+relay. It is self-contained: the agent must not begin by looking for a repository or referenced
+docs in the current directory. Let it perform read-only system discovery first. It must show you
+any state-changing or configuration command before running it and honor the client's normal
+approval flow.
 
 ```text
-Set up the relay-host half of a fresh two-agent Psst team by following the repository's
-docs/two-agent-push-quickstart.md and the bundled TEAM-SETUP.md. My intended result is one
+Set up the relay-host half of a fresh two-agent Psst team by following the two-agent push quickstart
+reproduced in this prompt and, after download, the bundled TEAM-SETUP.md. Do not search the current
+working directory for a Psst repository or documentation. My intended result is one
 long-running Codex App Server task on this machine and one long-running interactive Claude Code
 session on a second Tailscale machine. Incoming Psst mail must surface automatically; neither model
 may poll.
@@ -63,44 +124,59 @@ relay host's Tailscale address when more than one eligible private address exist
 
 Requirements:
 
-1. Locate or download the newest successful, retained, native Psst alpha.2 development artifact
-   appropriate for this machine. Verify its checksum, BUILD-INFO.txt, exact MANIFEST.json inventory
+1. Begin with read-only discovery of the operating system, architecture, environment variables,
+   Tailscale status, installed Codex command, and required download tools. Do not recursively scan
+   the current directory, home directory, or unrelated drives. Compute the conventional Psst home:
+   %LOCALAPPDATA%\Psst\dogfood on Windows,
+   $HOME/Library/Application Support/psst/dogfood on macOS, or
+   ${XDG_STATE_HOME:-$HOME/.local/state}/psst/dogfood on Linux. Show me that one absolute path and
+   the exact directories you will create, then request one approval to create them. After approval,
+   change into Psst home and keep every download, extraction, generated script, log, handoff file,
+   relay database, and non-secret state file below it. If you need task tracking, use only
+   operator/SETUP-STATUS.md under Psst home.
+2. Locate or download the newest successful, retained, native Psst alpha.2 development artifact
+   appropriate for this machine. Download directly into Psst home's downloads directory. If I
+   already have an archive elsewhere, inspect it read-only and copy the verified archive into that
+   directory before extraction. Verify its checksum, BUILD-INFO.txt, exact MANIFEST.json inventory
    and hashes, SBOM namespace binding, version, revision, and target. Do not run psst-mcp with
    --version; it is a protocol-only stdio server. Stop on any mismatch.
-2. Discover this machine's exact Tailscale IPv4 address. Choose an unused high TCP port, bind only
-   to that exact address with --allow-lan, use a data directory outside the extracted artifact, and
-   start exactly one relay in a dedicated foreground terminal. Do not bind 0.0.0.0, expose a public
-   port, or change a firewall unless an actual connectivity failure demonstrates a need and I
-   separately approve the exact rule.
-3. Prove relay health and readiness after a delayed HTTP connection, not merely TCP acceptance.
-4. Generate short readable identifiers from the current UTC date plus a random suffix: one squad,
+3. Extract only into packages/<full-revision> after rejecting unsafe paths, links, duplicate
+   members, and unexpected inventory. Read the bundled TEAM-SETUP.md from that verified package;
+   do not clone or require a source repository.
+4. Discover this machine's exact Tailscale IPv4 address. Choose an unused high TCP port, bind only
+   to that exact address with --allow-lan, and start exactly one relay in a dedicated foreground
+   terminal. Put its database under relay-data/<generated-deployment-name> and its diagnostics under
+   operator/logs. Do not bind 0.0.0.0, expose a public port, or change a firewall unless an actual
+   connectivity failure demonstrates a need and I separately approve the exact rule.
+5. Prove relay health and readiness after a delayed HTTP connection, not merely TCP acceptance.
+6. Generate short readable identifiers from the current UTC date plus a random suffix: one squad,
    one Codex member/profile, and one Claude member/profile. Create the squad once and bind only the
    Codex profile on this machine. Credentials must stay in Psst's protected local store and must
    never be read, printed, copied, or written to the handoff file.
-5. Do not leave a cooperative MCP process owning the Codex profile. Configure and start psst-codex
+7. Do not leave a cooperative MCP process owning the Codex profile. Configure and start psst-codex
    as the sole long-running owner with absolute paths and PSST_CODEX_APP_SERVER=1. Use its explicit
    one-time creation policy (PSST_CODEX_CREATE_THREAD=1 and a new PSST_CODEX_THREAD_RECORD path) so
    it creates and durably records a new Codex task ID without asking me to copy one. Keep psst-codex
    in a dedicated foreground terminal. On later starts, read the recorded ID and use
    PSST_CODEX_THREAD_ID instead of creating another task.
-6. Create a small operator directory outside the extracted artifact containing
-   Start-Psst-Relay.ps1 and Start-Psst-Codex.ps1. Both scripts must use the verified absolute paths
-   and non-secret configuration, stop on errors, and leave their foreground processes visible.
+8. Create operator/launchers/Start-Psst-Relay.ps1 and Start-Psst-Codex.ps1. Both scripts must use
+   the verified absolute paths and non-secret configuration, stop on errors, and leave their
+   foreground processes visible.
    Start-Psst-Codex.ps1 must automatically choose one-time thread creation only when the thread
-   record is absent and use the recorded thread ID on every later start. Neither script may read or
-   contain a Psst credential.
-7. Write PSST-TEAM-HANDOFF.md containing only non-secret values: Psst version and full revision,
-   source workflow/run and artifact names when applicable, relay origin, squad and mission, Claude
-   member/role/profile, required native target, the second machine's setup instructions, and the
-   exact acceptance-test bodies. Include no credential, authorization, token, account name, local
-   username, or sensitive filesystem path.
-8. If Tailscale file transfer is installed and exactly one intended second machine can be selected
+   record under operator/state is absent and use the recorded thread ID on every later start.
+   Neither script may read or contain a Psst credential.
+9. Write operator/handoff/PSST-TEAM-HANDOFF.md containing only non-secret values: Psst version and
+   full revision, source workflow/run and artifact names when applicable, relay origin, squad and
+   mission, Claude member/role/profile, required native target, the second machine's setup
+   instructions, and the exact acceptance-test bodies. Include no credential, authorization,
+   token, account name, local username, or sensitive filesystem path.
+10. If Tailscale file transfer is installed and exactly one intended second machine can be selected
    without guessing, offer one complete command to transfer PSST-TEAM-HANDOFF.md. Otherwise tell me
    only where the file is; I will move the whole file without editing it.
-9. Finish with a compact report: relay origin; squad; Codex member/profile; artifact identity;
-   operator-directory path; the exact complete commands that start each generated script;
-   psst-codex foreground process and stop instruction; handoff-file path; and the sentence "READY
-   FOR MACHINE B". Do not claim push delivery until Prompt C passes.
+11. Finish with a compact report: Psst home; relay origin; squad; Codex member/profile; artifact
+    identity; operator-directory path; the exact complete commands that start each generated
+    script; psst-codex foreground process and stop instruction; handoff-file path; and the sentence
+    "READY FOR MACHINE B". Do not claim push delivery until Prompt C passes.
 ```
 
 ### What Prompt A creates
@@ -127,42 +203,59 @@ profile record.
 ## Prompt B — client-only machine and Claude Code
 
 Move `PSST-TEAM-HANDOFF.md` to the second machine, attach it to a fresh Claude Code setup session,
-and paste this prompt. Do not copy individual values out of the file.
+and paste this prompt. You may start from any directory. Do not copy individual values out of the
+file.
 
 ```text
 Set up the client-only half of this Psst team. Read the attached PSST-TEAM-HANDOFF.md as the
-authoritative non-secret deployment plan, then follow docs/two-agent-push-quickstart.md and the
-bundled TEAM-SETUP.md. Do not ask me to substitute values into commands; parse all values from the
-handoff file and keep them in shell variables while working.
+authoritative non-secret deployment plan, then follow the two-agent push quickstart reproduced in
+this prompt and, after download, the bundled TEAM-SETUP.md. Do not search the current working
+directory for a Psst repository or documentation. Do not ask me to substitute values into commands;
+parse all values from the handoff file and keep them in shell variables while working.
 
 Requirements:
 
-1. Validate the handoff schema and closed fields. Reject credentials, authorization values, tokens,
-   account identifiers, or suspicious extra fields. Never display or copy a Psst credential.
-2. Locate or download the matching native artifact for this machine. Its Psst version and full
+1. Begin with read-only discovery of the operating system, architecture, environment variables,
+   Tailscale status, installed Claude command, and required download tools. Do not recursively scan
+   the current directory, home directory, or unrelated drives. Compute the conventional Psst home:
+   %LOCALAPPDATA%\Psst\dogfood on Windows,
+   $HOME/Library/Application Support/psst/dogfood on macOS, or
+   ${XDG_STATE_HOME:-$HOME/.local/state}/psst/dogfood on Linux. Show me that one absolute path and
+   the exact directories you will create, then request one approval to create them. After approval,
+   change into Psst home and keep downloads, extraction, launchers, logs, handoff, and non-secret
+   state there. If you need task tracking, use only operator/SETUP-STATUS.md under Psst home.
+2. Copy the attached handoff into operator/handoff/PSST-TEAM-HANDOFF.md, then validate its schema
+   and closed fields. Reject credentials, authorization values, tokens, account identifiers, or
+   suspicious extra fields. Never display or copy a Psst credential.
+3. Locate or download the matching native artifact for this machine directly into Psst home's
+   downloads directory. Its Psst version and full
    40-hex revision must exactly match the handoff. Verify checksum, BUILD-INFO.txt, exact manifest
    inventory and hashes, SBOM namespace binding, and target. Do not run psst-mcp with --version.
-3. Do not start a relay and do not create the squad. Prove HTTP health and readiness at the exact
+   Extract only into packages/<full-revision> after rejecting unsafe paths, links, duplicate
+   members, and unexpected inventory. Read TEAM-SETUP.md from that verified package; do not clone or
+   require a source repository.
+4. Do not start a relay and do not create the squad. Prove HTTP health and readiness at the exact
    relay_origin from the handoff before changing local profile or Claude configuration.
-4. Bind the exact Claude profile from the handoff to the stated squad/member/role once. If the
+5. Bind the exact Claude profile from the handoff to the stated squad/member/role once. If the
    profile already exists, verify its relay and identity and resume it instead of rejoining. Keep
    the generated credential only in Psst's protected local store.
-5. Configure one process-scoped Claude MCP entry using the absolute psst-mcp path, PSST_RELAY from
-   the handoff, PSST_PROFILE from the handoff, and PSST_CLAUDE_CHANNEL=enabled. Do not leave a normal
-   cooperative MCP owner running for the same profile.
-6. Check the installed Claude Code help and current Channel syntax. Create a local
-   start-psst-claude.sh launcher outside the extracted artifact. It must use absolute verified paths,
+6. Configure one process-scoped Claude MCP entry under operator/state using the absolute psst-mcp
+   path, PSST_RELAY from the handoff, PSST_PROFILE from the handoff, and
+   PSST_CLAUDE_CHANNEL=enabled. Do not leave a normal cooperative MCP owner running for the same
+   profile.
+7. Check the installed Claude Code help and current Channel syntax. Create
+   operator/launchers/start-psst-claude.sh. It must use absolute verified paths,
    a process-scoped strict MCP configuration, the exact handoff values, and the required Channel
    opt-in. It must not contain or read a Psst credential. Launch a long-running
    interactive Claude Code session in a dedicated foreground terminal with the exact named Psst
    server loaded as a development Channel. Never use claude -p. Do not use a permission-skipping
    flag unless I explicitly authorize it for this trusted rehearsal.
-7. Confirm the startup banner says Channel messages from the exact Psst server enter the session.
+8. Confirm the startup banner says Channel messages from the exact Psst server enter the session.
    Then call agent_status and squad_roster once to prove the profile resumed and both members are
    visible. Do not start an application-level polling loop and do not repeatedly call
    message_receive while idle.
-8. Finish with a compact report: relay origin; squad; Claude member/profile; artifact identity;
-   launcher path and its exact complete start command; foreground Claude process and stop
+9. Finish with a compact report: Psst home; relay origin; squad; Claude member/profile; artifact
+   identity; launcher path and its exact complete start command; foreground Claude process and stop
    instruction; Channel banner result; roster result; and the sentence "READY FOR PUSH TEST".
 ```
 

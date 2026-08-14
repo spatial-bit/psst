@@ -38,4 +38,7 @@ verifying mail behavior, operating the hub, troubleshooting, and cleaning up.
   substitutions by assigning discovery, generation, and the explicit App Server thread-record
   policy to the setup agents. It describes the user-facing goal as two long-running sessions with
   automatically surfaced mail, while retaining body-free wake, explicit retrieval/acknowledgement,
-  single profile ownership, and trusted-tailnet boundaries.
+  single profile ownership, and trusted-tailnet boundaries. The prompts are independent of the
+  caller's current directory: each agent creates a conventional platform-specific Psst home and
+  confines downloads, packages, launchers, logs, handoff, relay data, and non-secret state beneath
+  it without requiring a source checkout.
