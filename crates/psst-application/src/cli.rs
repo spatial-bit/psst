@@ -21,6 +21,9 @@ Global options:
 
 Commands:
   relay start [--bind <address>] [--data-dir <path>] [--allow-lan] [--log <level>]
+  agent claude [--continue] [--dangerously-skip-permissions]
+  agent codex [--continue]
+  agent status
   health
   config show --effective
   profile list
@@ -55,6 +58,9 @@ pub enum CliCommand {
     /// Failure-only identity for usage errors before an executable command is selected.
     Invocation,
     RelayStart,
+    AgentClaude,
+    AgentCodex,
+    AgentStatus,
     Health,
     ConfigShowEffective,
     ProfileList,

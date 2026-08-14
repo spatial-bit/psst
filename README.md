@@ -22,6 +22,10 @@ This is an **unreleased dogfood candidate**, not a production release. To build 
 give a Codex or Claude agent the complete [agent-guided team setup runbook](docs/team-setup-agent-guide.md).
 That guide starts with the essential deployment distinction: one machine hosts the relay; every
 other machine is a native client and must not start another relay or copy credentials.
+The next product slice is consolidating relay and long-running client harnesses behind one public
+`psst` executable. See the implementation-candidate
+[one-command agent launcher](docs/unified-agent-launcher.md); it is not part of the currently
+verified alpha.2 artifact yet.
 For a shorter cooperative-only path, start with the
 [cooperative dogfood guide](docs/cooperative-dogfood.md), use the exact command surface in
 [CLI reference](docs/cli-reference.md), and see [development artifacts](docs/development-artifacts.md)

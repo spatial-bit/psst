@@ -143,3 +143,27 @@ checkoutless create/join/send/wake/replay/ack/restart journey. A Claude or Codex
 bundled guide can walk a user through creating one or more teams, assigning one profile per
 membership, starting the correct harness, verifying delivery, and cleaning up safely. Tagging and
 publication remain separate owner-authorized actions.
+
+## Slice 7 — One-command agent fleet
+
+Status: active
+
+One public executable, saved relay discovery, invitation-backed team setup, and first-class Claude
+and Codex meta-harnesses.
+
+Execution order:
+
+```text
+W-701 Unified psst process and agent-driver boundary
+  -> W-702 Safe relay discovery and saved origin
+      -> W-703 Invitation-backed team create/join
+          -> W-704 One-command Claude and Codex native gate
+```
+
+Gate: a fresh supported machine uses only the packaged `psst` executable. One command creates or
+joins a team, and `psst agent claude|codex` creates or resumes exactly one durable membership and
+long-running wake harness without user-authored MCP JSON, environment variables, executable paths,
+thread IDs, or relay IP substitution. Tailscale and same-link discovery fail closed on zero or
+multiple candidates, save a confirmed canonical origin, and never weaken explicit configuration or
+trusted-network warnings. Downloaded native packages prove restart, wake, replay, acknowledgement,
+multi-team isolation, and compatibility-shim behavior.

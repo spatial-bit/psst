@@ -953,8 +953,11 @@ dependencies = [
 name = "psst-cli"
 version = "0.1.0-alpha.2"
 dependencies = [
+ "fs2",
  "psst-application",
  "psst-client",
+ "psst-codex",
+ "psst-mcp",
  "psst-platform-security",
  "psst-protocol",
  "psst-relay",

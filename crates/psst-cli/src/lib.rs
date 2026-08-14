@@ -2,11 +2,13 @@
 
 #![forbid(unsafe_code)]
 
+use fs2::FileExt as _;
 use psst_application::{
     CLI_HELP, CliCommand, CliFailure, CliSuccess, ConfigFlags, ConfigInputs, ConfigResolver,
-    CredentialState, LocalErrorCode, PlatformPaths, ResolvedConfig, RuntimeSpec, SessionError,
-    SessionHealth, SessionRuntime, UnboundRuntimeSpec, emit_json_failure, emit_json_success,
-    harness_status_path, load_harness_status_view, load_profile, map_client_error,
+    CredentialState, LocalErrorCode, PlatformPaths, ProfilePaths, ResolvedConfig, RuntimeSpec,
+    SessionError, SessionHealth, SessionRuntime, UnboundRuntimeSpec, emit_json_failure,
+    emit_json_success, harness_status_path, load_harness_status_view, load_profile,
+    map_client_error, verify_profile_origin,
 };
 use psst_client::{Client, ClientConfig};
 use psst_protocol::{
@@ -27,6 +29,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use tokio::process::Command;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -41,6 +44,10 @@ struct GlobalOptions {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ParsedCommand {
     RelayStart(RelayStartArgs),
+    AgentClaude(AgentClaudeArgs),
+    AgentCodex(AgentCodexArgs),
+    AgentStatus,
+    InternalMcp,
     Health,
     ConfigShowEffective,
     HarnessStatus,
@@ -62,6 +69,10 @@ impl ParsedCommand {
     const fn contract(&self) -> CliCommand {
         match self {
             Self::RelayStart(_) => CliCommand::RelayStart,
+            Self::AgentClaude(_) => CliCommand::AgentClaude,
+            Self::AgentCodex(_) => CliCommand::AgentCodex,
+            Self::AgentStatus => CliCommand::AgentStatus,
+            Self::InternalMcp => CliCommand::Invocation,
             Self::Health => CliCommand::Health,
             Self::ConfigShowEffective => CliCommand::ConfigShowEffective,
             Self::HarnessStatus => CliCommand::HarnessStatus,
@@ -71,6 +82,17 @@ impl ParsedCommand {
             Self::Deferred { command, .. } => *command,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct AgentClaudeArgs {
+    continue_session: bool,
+    dangerously_skip_permissions: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct AgentCodexArgs {
+    continue_session: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -99,10 +121,368 @@ pub async fn run_process(arguments: impl IntoIterator<Item = OsString>) -> ExitC
     // Do not hold process-wide output locks across asynchronous command execution. Relay request
     // tracing can run on another Tokio worker; a long-lived stderr lock here would block that
     // worker before Hyper can publish the completed response.
+    let arguments = arguments.into_iter().collect::<Vec<_>>();
+    match parse(arguments.clone()) {
+        Ok(Invocation::Command(options, ParsedCommand::InternalMcp)) => {
+            return ExitCode::from(run_internal_mcp(&options).await);
+        }
+        Ok(Invocation::Command(options, ParsedCommand::AgentClaude(arguments))) => {
+            return ExitCode::from(run_agent_claude(&options, arguments).await);
+        }
+        Ok(Invocation::Command(options, ParsedCommand::AgentCodex(arguments))) => {
+            return ExitCode::from(run_agent_codex(&options, arguments).await);
+        }
+        _ => {}
+    }
     let mut stdout = io::stdout();
     let mut stderr = io::stderr();
     let code = run_with_io(arguments, &mut stdout, &mut stderr).await;
     ExitCode::from(code)
+}
+
+async fn run_internal_mcp(options: &GlobalOptions) -> u8 {
+    if options.json
+        || options.config.is_some()
+        || options.profile.is_some()
+        || options.relay.is_some()
+    {
+        eprintln!("psst: invalid internal MCP invocation");
+        return 64;
+    }
+    match psst_mcp::serve_configured_stdio().await {
+        Ok(()) => 0,
+        Err(psst_mcp::ConfiguredStdioError::Startup) => {
+            eprintln!("psst: cooperative MCP startup failed");
+            70
+        }
+        Err(psst_mcp::ConfiguredStdioError::Protocol) => {
+            eprintln!("psst: MCP protocol session failed");
+            70
+        }
+    }
+}
+
+async fn run_agent_codex(options: &GlobalOptions, arguments: AgentCodexArgs) -> u8 {
+    if options.json {
+        eprintln!("psst: agent processes require an interactive terminal");
+        return 64;
+    }
+    let Ok(resolved) = resolve_config(options, None) else {
+        eprintln!("psst: Codex agent configuration is invalid");
+        return 78;
+    };
+    if !bound_agent_profile(&resolved) {
+        eprintln!("psst: Codex agent profile is not bound to this relay");
+        return 78;
+    }
+    let Ok(executable) = std::env::current_exe() else {
+        eprintln!("psst: agent launcher unavailable");
+        return 70;
+    };
+    let directory = resolved
+        .paths
+        .data_dir
+        .join("agents")
+        .join(&resolved.profile.value);
+    if std::fs::create_dir_all(&directory).is_err() {
+        eprintln!("psst: Codex agent state directory could not be created");
+        return 74;
+    }
+    let Ok(_launcher) = AgentLaunchGuard::acquire(&directory) else {
+        eprintln!("psst: this agent profile is already running");
+        return 75;
+    };
+    let record = directory.join("codex-thread-id");
+    let thread = if let Ok(Some(identifier)) = load_codex_thread_record(&record) {
+        psst_codex::ThreadPolicy::Resume(identifier)
+    } else if record.exists() {
+        eprintln!("psst: Codex task record is invalid");
+        return 78;
+    } else if arguments.continue_session {
+        eprintln!("psst: no saved Codex task exists for this profile");
+        return 78;
+    } else {
+        psst_codex::ThreadPolicy::Create {
+            record: record.clone(),
+        }
+    };
+    let Some((codex_command, codex_args)) = resolve_local_command("codex", "PSST_CODEX_COMMAND")
+    else {
+        eprintln!("psst: Codex could not be located; install it or set PSST_CODEX_COMMAND");
+        return 69;
+    };
+    let mut mcp_environment = BTreeMap::from([
+        ("PSST_PROFILE".to_owned(), resolved.profile.value.clone()),
+        ("PSST_RELAY".to_owned(), resolved.relay_origin.value.clone()),
+    ]);
+    for key in [
+        "APPDATA",
+        "LOCALAPPDATA",
+        "HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_RUNTIME_DIR",
+    ] {
+        if let Ok(value) = std::env::var(key)
+            && !value.is_empty()
+        {
+            mcp_environment.insert(key.to_owned(), value);
+        }
+    }
+    let app_server = psst_codex::AppServerConfig {
+        command: codex_command,
+        command_args: codex_args,
+        mcp_command: executable,
+        mcp_args: vec!["internal".into(), "mcp".into()],
+        mcp_environment,
+        thread,
+        cwd: directory,
+    };
+    let activation = psst_codex::start_with_app_server(resolved, app_server).await;
+    let Ok(activation) = activation else {
+        eprintln!("psst: Codex agent startup failed");
+        return 70;
+    };
+    eprintln!("Psst Codex agent is running; press Ctrl+C to stop.");
+    shutdown_signal().await;
+    if activation.shutdown().await.is_err() {
+        eprintln!("psst: Codex agent shutdown failed");
+        return 70;
+    }
+    0
+}
+
+async fn run_agent_claude(options: &GlobalOptions, arguments: AgentClaudeArgs) -> u8 {
+    if options.json {
+        eprintln!("psst: agent processes require an interactive terminal");
+        return 64;
+    }
+    let Ok(resolved) = resolve_config(options, None) else {
+        eprintln!("psst: Claude agent configuration is invalid");
+        return 78;
+    };
+    if !bound_agent_profile(&resolved) {
+        eprintln!("psst: Claude agent profile is not bound to this relay");
+        return 78;
+    }
+    let Ok(executable) = std::env::current_exe() else {
+        eprintln!("psst: agent launcher unavailable");
+        return 70;
+    };
+    let server_name = format!("psst-{}", resolved.profile.value);
+    if !valid_local_server_name(&server_name) {
+        eprintln!("psst: profile cannot be used as a Claude server name");
+        return 78;
+    }
+    let directory = resolved
+        .paths
+        .runtime_dir
+        .join("agents")
+        .join(&resolved.profile.value);
+    if std::fs::create_dir_all(&directory).is_err() {
+        eprintln!("psst: Claude agent configuration could not be created");
+        return 74;
+    }
+    let lock_directory = resolved
+        .paths
+        .data_dir
+        .join("agents")
+        .join(&resolved.profile.value);
+    if std::fs::create_dir_all(&lock_directory).is_err() {
+        eprintln!("psst: Claude agent state directory could not be created");
+        return 74;
+    }
+    let Ok(_launcher) = AgentLaunchGuard::acquire(&lock_directory) else {
+        eprintln!("psst: this agent profile is already running");
+        return 75;
+    };
+    let Ok(config) = write_claude_mcp_config(&resolved, &executable, &server_name, &directory)
+    else {
+        eprintln!("psst: Claude agent configuration could not be written");
+        return 74;
+    };
+    let Some((claude_command, claude_args)) =
+        resolve_local_command("claude", "PSST_CLAUDE_COMMAND")
+    else {
+        eprintln!("psst: Claude could not be located; install it or set PSST_CLAUDE_COMMAND");
+        return 69;
+    };
+    let mut command = Command::new(claude_command);
+    command
+        .args(claude_args)
+        .arg("--strict-mcp-config")
+        .arg("--mcp-config")
+        .arg(config.path())
+        .arg("--dangerously-load-development-channels")
+        .arg(format!("server:{server_name}"))
+        .current_dir(&directory);
+    if arguments.continue_session {
+        command.arg("--continue");
+    }
+    if arguments.dangerously_skip_permissions {
+        command.arg("--dangerously-skip-permissions");
+    }
+    let status = command.status().await;
+    match status {
+        Ok(status) if status.success() => 0,
+        Ok(status) => status
+            .code()
+            .and_then(|code| u8::try_from(code).ok())
+            .unwrap_or(70),
+        Err(_) => {
+            eprintln!("psst: Claude could not be launched; verify that `claude` is installed");
+            69
+        }
+    }
+}
+
+fn valid_local_server_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 96
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn write_claude_mcp_config(
+    resolved: &ResolvedConfig,
+    executable: &std::path::Path,
+    server_name: &str,
+    directory: &std::path::Path,
+) -> Result<tempfile::NamedTempFile, ()> {
+    let config = serde_json::json!({
+        "mcpServers": {
+            server_name: {
+                "type": "stdio",
+                "command": executable,
+                "args": ["internal", "mcp"],
+                "env": {
+                    "PSST_RELAY": resolved.relay_origin.value,
+                    "PSST_PROFILE": resolved.profile.value,
+                    "PSST_CLAUDE_CHANNEL": "enabled"
+                }
+            }
+        }
+    });
+    let encoded = serde_json::to_vec_pretty(&config).map_err(|_| ())?;
+    let mut file = tempfile::Builder::new()
+        .prefix("claude-mcp-")
+        .suffix(".json")
+        .tempfile_in(directory)
+        .map_err(|_| ())?;
+    file.write_all(&encoded).map_err(|_| ())?;
+    file.flush().map_err(|_| ())?;
+    Ok(file)
+}
+
+fn valid_agent_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn load_codex_thread_record(path: &std::path::Path) -> Result<Option<String>, ()> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let metadata = std::fs::metadata(path).map_err(|_| ())?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > 129 {
+        return Err(());
+    }
+    let identifier = std::fs::read_to_string(path).map_err(|_| ())?;
+    let identifier = identifier.trim().to_owned();
+    if !valid_agent_identifier(&identifier) {
+        return Err(());
+    }
+    Ok(Some(identifier))
+}
+
+fn bound_agent_profile(resolved: &ResolvedConfig) -> bool {
+    let Ok(paths) = ProfilePaths::for_profile(
+        &resolved.paths,
+        &resolved.relay_origin.value,
+        &resolved.profile.value,
+    ) else {
+        return false;
+    };
+    let Ok(Some(binding)) = load_profile(&paths.metadata) else {
+        return false;
+    };
+    verify_profile_origin(&binding, &resolved.relay_origin.value).is_ok()
+}
+
+fn resolve_local_command(name: &str, override_name: &str) -> Option<(PathBuf, Vec<String>)> {
+    if let Some(path) = std::env::var_os(override_name).map(PathBuf::from) {
+        return executable_command(path);
+    }
+    let path = std::env::var_os("PATH")?;
+    for directory in std::env::split_paths(&path) {
+        #[cfg(windows)]
+        let candidates = [
+            directory.join(format!("{name}.exe")),
+            directory.join(format!("{name}.cmd")),
+            directory.join(format!("{name}.bat")),
+        ];
+        #[cfg(not(windows))]
+        let candidates = [directory.join(name)];
+        for candidate in candidates {
+            if let Some(command) = executable_command(candidate) {
+                return Some(command);
+            }
+        }
+    }
+    None
+}
+
+fn executable_command(path: PathBuf) -> Option<(PathBuf, Vec<String>)> {
+    if !path.is_file() {
+        return None;
+    }
+    #[cfg(windows)]
+    if path
+        .extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+        })
+    {
+        let shell = std::env::var_os("ComSpec").map(PathBuf::from)?;
+        if !shell.is_file() {
+            return None;
+        }
+        return Some((
+            shell,
+            vec![
+                "/d".into(),
+                "/c".into(),
+                path.to_string_lossy().into_owned(),
+            ],
+        ));
+    }
+    Some((path, Vec::new()))
+}
+
+struct AgentLaunchGuard(std::fs::File);
+
+impl AgentLaunchGuard {
+    fn acquire(directory: &std::path::Path) -> io::Result<Self> {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(directory.join("launcher.lock"))?;
+        file.try_lock_exclusive()?;
+        Ok(Self(file))
+    }
+}
+
+impl Drop for AgentLaunchGuard {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
 }
 
 async fn run_with_io(
@@ -251,10 +631,13 @@ async fn execute(options: &GlobalOptions, command: ParsedCommand) -> Result<Valu
             serde_json::to_value(resolved.view(credential_state(&resolved)))
                 .map_err(|_| LocalErrorCode::Internal)
         }
-        ParsedCommand::HarnessStatus => {
+        ParsedCommand::HarnessStatus | ParsedCommand::AgentStatus => {
             let resolved = resolve_config(options, None)?;
             execute_harness_status(&resolved)
         }
+        ParsedCommand::AgentClaude(_)
+        | ParsedCommand::AgentCodex(_)
+        | ParsedCommand::InternalMcp => Err(LocalErrorCode::Internal),
         ParsedCommand::SquadList => serde_json::to_value(
             client(&resolve_config(options, None)?)?
                 .list_squads()
@@ -1104,6 +1487,20 @@ fn parse_command(args: &[OsString], json: bool) -> Result<ParsedCommand, ParseEr
         "relay" if args.get(1).is_some_and(|value| value == "start") => {
             parse_relay_start(&args[2..], json)
         }
+        "agent" if args.get(1).is_some_and(|value| value == "claude") => {
+            parse_agent_claude(&args[2..], json)
+        }
+        "agent" if args.get(1).is_some_and(|value| value == "codex") => {
+            parse_agent_codex(&args[2..], json)
+        }
+        "agent" if args.get(1).is_some_and(|value| value == "status") && args.len() == 2 => {
+            Ok(ParsedCommand::AgentStatus)
+        }
+        "internal"
+            if args.get(1).is_some_and(|value| value == "mcp") && args.len() == 2 && !json =>
+        {
+            Ok(ParsedCommand::InternalMcp)
+        }
         "config"
             if args.get(1).is_some_and(|value| value == "show")
                 && args.get(2).is_some_and(|value| value == "--effective")
@@ -1137,6 +1534,43 @@ fn parse_command(args: &[OsString], json: bool) -> Result<ParsedCommand, ParseEr
         }
         _ => parse_deferred(args, json),
     }
+}
+
+fn parse_agent_claude(args: &[OsString], json: bool) -> Result<ParsedCommand, ParseError> {
+    let command = CliCommand::AgentClaude;
+    let mut parsed = AgentClaudeArgs::default();
+    for argument in args {
+        match argument.to_str() {
+            Some("--continue") if !parsed.continue_session => parsed.continue_session = true,
+            Some("--dangerously-skip-permissions") if !parsed.dangerously_skip_permissions => {
+                parsed.dangerously_skip_permissions = true;
+            }
+            _ => {
+                return Err(ParseError {
+                    command: Some(command),
+                    json,
+                });
+            }
+        }
+    }
+    Ok(ParsedCommand::AgentClaude(parsed))
+}
+
+fn parse_agent_codex(args: &[OsString], json: bool) -> Result<ParsedCommand, ParseError> {
+    let command = CliCommand::AgentCodex;
+    let mut parsed = AgentCodexArgs::default();
+    for argument in args {
+        match argument.to_str() {
+            Some("--continue") if !parsed.continue_session => parsed.continue_session = true,
+            _ => {
+                return Err(ParseError {
+                    command: Some(command),
+                    json,
+                });
+            }
+        }
+    }
+    Ok(ParsedCommand::AgentCodex(parsed))
 }
 
 fn parse_relay_start(args: &[OsString], json: bool) -> Result<ParsedCommand, ParseError> {
@@ -1265,6 +1699,9 @@ fn deferred_identity(args: &[OsString]) -> Option<CliCommand> {
     let second = args.get(1).and_then(|value| value.to_str());
     match (first, second) {
         ("relay", Some("start")) => Some(CliCommand::RelayStart),
+        ("agent", Some("claude")) => Some(CliCommand::AgentClaude),
+        ("agent", Some("codex")) => Some(CliCommand::AgentCodex),
+        ("agent", Some("status")) => Some(CliCommand::AgentStatus),
         ("health", _) => Some(CliCommand::Health),
         ("config", Some("show")) => Some(CliCommand::ConfigShowEffective),
         ("harness", Some("status")) => Some(CliCommand::HarnessStatus),
@@ -1546,6 +1983,122 @@ mod tests {
         assert_eq!(code, 0);
         assert_eq!(stdout, format!("psst {VERSION}\n"));
         assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn unified_agent_grammar_is_closed_and_internal_mcp_is_hidden() {
+        let Invocation::Command(_, ParsedCommand::AgentClaude(claude)) =
+            parse(["psst", "agent", "claude", "--continue"].map(OsString::from)).unwrap()
+        else {
+            panic!("Claude agent command was not selected");
+        };
+        assert!(claude.continue_session);
+        assert!(!claude.dangerously_skip_permissions);
+
+        let Invocation::Command(_, ParsedCommand::AgentCodex(codex)) =
+            parse(["psst", "agent", "codex", "--continue"].map(OsString::from)).unwrap()
+        else {
+            panic!("Codex agent command was not selected");
+        };
+        assert!(codex.continue_session);
+
+        assert!(parse(["psst", "agent", "claude", "--unknown"].map(OsString::from)).is_err());
+        assert!(
+            parse(["psst", "agent", "codex", "--dangerously-skip-permissions"].map(OsString::from))
+                .is_err()
+        );
+        assert!(parse(["psst", "--json", "internal", "mcp"].map(OsString::from)).is_err());
+        assert!(CLI_HELP.contains("agent claude [--continue]"));
+        assert!(!CLI_HELP.contains("internal mcp"));
+    }
+
+    #[test]
+    fn generated_claude_config_uses_the_unified_binary_and_contains_no_authority() {
+        let directory = tempfile::tempdir().unwrap();
+        let platform = PlatformPaths {
+            config_dir: directory.path().join("config"),
+            data_dir: directory.path().join("data"),
+            runtime_dir: directory.path().join("runtime"),
+        };
+        let resolved = ConfigResolver::new(platform)
+            .resolve(&ConfigInputs {
+                flags: ConfigFlags {
+                    relay_origin: Some("http://relay.tailnet:7341".into()),
+                    profile: Some("research-claude".into()),
+                    config_path: Some(directory.path().join("missing.yaml")),
+                    ..ConfigFlags::default()
+                },
+                environment: BTreeMap::new(),
+            })
+            .unwrap();
+        let output = directory.path().join("agent");
+        std::fs::create_dir_all(&output).unwrap();
+        let executable = directory.path().join("psst.exe");
+        let file = write_claude_mcp_config(&resolved, &executable, "psst-research-claude", &output)
+            .unwrap();
+        let value: Value = serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap();
+        let server = &value["mcpServers"]["psst-research-claude"];
+        assert_eq!(server["command"], executable.to_string_lossy().as_ref());
+        assert_eq!(server["args"], serde_json::json!(["internal", "mcp"]));
+        assert_eq!(server["env"]["PSST_PROFILE"], "research-claude");
+        assert_eq!(server["env"]["PSST_RELAY"], "http://relay.tailnet:7341");
+        let encoded = value.to_string().to_ascii_lowercase();
+        for forbidden in ["authorization", "bearer", "credential", "token", "secret"] {
+            assert!(!encoded.contains(forbidden));
+        }
+        let path = file.path().to_owned();
+        drop(file);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn agent_launcher_lock_is_exclusive_and_reusable() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = AgentLaunchGuard::acquire(directory.path()).unwrap();
+        assert!(AgentLaunchGuard::acquire(directory.path()).is_err());
+        drop(first);
+        AgentLaunchGuard::acquire(directory.path()).unwrap();
+    }
+
+    #[test]
+    fn codex_thread_record_is_bounded_and_exact() {
+        let directory = tempfile::tempdir().unwrap();
+        let record = directory.path().join("codex-thread-id");
+        assert_eq!(load_codex_thread_record(&record), Ok(None));
+        std::fs::write(&record, b"thr_durable\n").unwrap();
+        assert_eq!(
+            load_codex_thread_record(&record),
+            Ok(Some("thr_durable".into()))
+        );
+        std::fs::write(&record, vec![b'x'; 130]).unwrap();
+        assert_eq!(load_codex_thread_record(&record), Err(()));
+        std::fs::write(&record, b"bad value\n").unwrap();
+        assert_eq!(load_codex_thread_record(&record), Err(()));
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_command_shim_preserves_following_agent_arguments() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("arguments.txt");
+        let shim = directory.path().join("agent.cmd");
+        std::fs::write(
+            &shim,
+            format!("@echo off\r\n@echo %* > \"{}\"\r\n", output.display()),
+        )
+        .unwrap();
+        let (command, prefix) = executable_command(shim).unwrap();
+        let status = Command::new(command)
+            .args(prefix)
+            .args(["app-server", "--stdio"])
+            .status()
+            .await
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(
+            std::fs::read_to_string(output).unwrap().trim(),
+            "app-server --stdio"
+        );
     }
 
     #[test]
