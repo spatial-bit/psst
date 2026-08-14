@@ -138,5 +138,6 @@ Last reconciled: 2026-08-14
 ## Next coordinator action
 
 Publish W-701 as a stacked review branch after the relay-fix/documentation base, run native CI and
-packaged Claude/Codex launch rehearsals, then begin W-702 bounded relay discovery. Do not tag or
-publish a release without separate exact owner authorization.
+packaged Claude/Codex launch rehearsals, then complete W-702 discovery, W-703 invitations, and W-704
+manifest-covered user-local setup scripts before the W-705 native gate. Do not tag or publish a
+release without separate exact owner authorization.

@@ -157,13 +157,16 @@ Execution order:
 W-701 Unified psst process and agent-driver boundary
   -> W-702 Safe relay discovery and saved origin
       -> W-703 Invitation-backed team create/join
-          -> W-704 One-command Claude and Codex native gate
+          -> W-704 Verified package-local setup and upgrade scripts
+              -> W-705 One-command Claude and Codex native gate
 ```
 
-Gate: a fresh supported machine uses only the packaged `psst` executable. One command creates or
-joins a team, and `psst agent claude|codex` creates or resumes exactly one durable membership and
-long-running wake harness without user-authored MCP JSON, environment variables, executable paths,
-thread IDs, or relay IP substitution. Tailscale and same-link discovery fail closed on zero or
-multiple candidates, save a confirmed canonical origin, and never weaken explicit configuration or
-trusted-network warnings. Downloaded native packages prove restart, wake, replay, acknowledgement,
+Gate: a fresh supported machine downloads one native package and runs its manifest-covered,
+no-administrator `setup.ps1` or `setup.sh` into a documented user-local directory. It then uses only
+the packaged `psst` executable. One command creates or joins a team, and `psst agent claude|codex`
+creates or resumes exactly one durable membership and long-running wake harness without user-authored
+MCP JSON, environment variables, executable paths, thread IDs, or relay IP substitution. Tailscale
+and same-link discovery fail closed on zero or multiple candidates, save a confirmed canonical
+origin, and never weaken explicit configuration or trusted-network warnings. Downloaded native
+packages prove setup, upgrade, uninstall-with-data-retention, restart, wake, replay, acknowledgement,
 multi-team isolation, and compatibility-shim behavior.

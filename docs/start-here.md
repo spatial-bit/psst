@@ -19,9 +19,65 @@ standard application-data directories.
 
 ## Before you begin
 
-Put the extracted native Psst package in a stable tools directory outside Downloads and outside any
-project or notes vault. Keep every file from one package together. Use the same Psst version and
-revision on all machines.
+### 1. Download Psst
+
+Psst does not have a public installer or permanent release download yet. These are short-retention,
+unsigned dogfood packages:
+
+1. Open the [Development artifacts workflow](https://github.com/spatial-bit/psst/actions/workflows/development-artifacts.yml?query=branch%3Amain).
+2. Open the newest successful run on `main` whose revision you intend to use.
+3. In **Artifacts**, download the package for this machine:
+   - `windows-x86_64` for 64-bit Windows;
+   - `linux-x86_64` for 64-bit Intel/AMD Linux;
+   - `macos-aarch64` for Apple Silicon macOS.
+4. GitHub downloads an outer ZIP. Extract it, then extract the native `.zip` or `.tar.gz` inside.
+5. Read `DEVELOPMENT-BUILD`, compare the inner archive with the bundled `.SHA256`, and follow the
+   verification section in `TEAM-SETUP.md`. Stop on any version, revision, target, inventory, or
+   hash mismatch.
+
+Use the same Psst version and full revision on every machine. Never substitute a locally built
+binary for one member of the package.
+
+### 2. Put it in one stable directory
+
+Keep every extracted package file together outside Downloads and outside any project or notes
+vault. No administrator access is required.
+
+On Windows, open PowerShell **inside the extracted package directory** and paste this whole block:
+
+```powershell
+$PsstHome = Join-Path $env:LOCALAPPDATA 'Programs\Psst'
+New-Item -ItemType Directory -Force -Path $PsstHome | Out-Null
+Copy-Item -Path '.\*' -Destination $PsstHome -Recurse -Force
+$UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+$PathParts = @($UserPath -split ';' | Where-Object { $_ })
+if ($PathParts -notcontains $PsstHome) {
+  [Environment]::SetEnvironmentVariable('Path', (($PathParts + $PsstHome) -join ';'), 'User')
+}
+& (Join-Path $PsstHome 'psst.exe') --version
+```
+
+Open a new terminal afterward so `psst` is on `PATH`.
+
+On macOS or Linux, open a terminal **inside the extracted package directory** and paste:
+
+```sh
+PSST_HOME="$HOME/.local/opt/psst"
+mkdir -p "$PSST_HOME" "$HOME/.local/bin"
+cp -R ./* "$PSST_HOME"/
+ln -sf "$PSST_HOME/psst" "$HOME/.local/bin/psst"
+export PATH="$HOME/.local/bin:$PATH"
+psst --version
+```
+
+Add `$HOME/.local/bin` to your shell's `PATH` once if it is not already there. Psst does not edit
+shell startup files automatically.
+
+The planned package-local `setup.ps1` and `setup.sh` will make this section one verified command.
+Until those scripts pass native artifact rehearsal, this explicit portable installation is the
+supported dogfood path.
+
+### 3. Check the agent client
 
 You need Claude Code or Codex installed and signed in on the machine that will run that agent. Psst
 credentials are created by joining a squad; they are not your Claude, Codex, GitHub, or Tailscale
