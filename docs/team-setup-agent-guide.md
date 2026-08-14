@@ -1,5 +1,8 @@
 # Agent guide: build and operate a Psst team
 
+> **Detailed/manual runbook:** New users should begin with [Start here](start-here.md). This file is
+> retained for agents operating older packages or diagnosing the underlying profile/MCP lifecycle.
+
 This file is a complete operator runbook for a Codex or Claude agent helping a user set up Psst.
 Follow it in order. Do not guess paths, network addresses, profile names, client capabilities, or
 permission policy. Show the user each state-changing command before running it and stop on any

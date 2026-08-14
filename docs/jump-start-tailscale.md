@@ -1,5 +1,8 @@
 # Jump Start: connect Codex and Claude over Tailscale
 
+> **Manual alpha.2 path:** For packages containing `psst agent`, begin with
+> [Start here](start-here.md). Keep this guide for older packages and detailed Tailscale diagnosis.
+
 Want your agents to talk to each other? Paste the prompt below into a Codex or Claude session on
 the machine that will host Psst. The agent will verify the package, start the one relay on that
 machine's Tailscale address, join itself, and walk you through adding a native Codex or Claude

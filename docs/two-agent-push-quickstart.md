@@ -1,5 +1,8 @@
 # Two long-running agents, one relay
 
+> **Manual alpha.2 path:** For packages containing `psst agent`, begin with
+> [Start here](start-here.md). This longer guide remains the low-level wake-harness reference.
+
 This is the shortest supported path to a long-running Codex agent and a long-running Claude Code
 agent that share one Psst squad. Incoming mail is surfaced automatically. Neither the operator nor
 the model runs a polling loop.

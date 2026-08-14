@@ -1,5 +1,8 @@
 # Tutorial: Windows Codex and macOS Claude over Tailscale
 
+> **Manual alpha.2 tutorial:** For packages containing `psst agent`, begin with
+> [Start here](start-here.md). Use this page when you need every cross-platform diagnostic step.
+
 This tutorial turns two already-connected Tailscale machines into one cooperative Psst team:
 
 - Windows x64 runs the only Psst relay and a Codex member;

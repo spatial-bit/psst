@@ -1,5 +1,8 @@
 # Wake harness operations
 
+> **Low-level compatibility reference:** The unified `psst agent` surface is described in
+> [Start here](start-here.md). Use this page to diagnose the older standalone harness processes.
+
 Status: Slice 4 implementation candidate. These harnesses are local, opt-in development surfaces,
 not part of the `v0.1.0-alpha.1` release.
 
