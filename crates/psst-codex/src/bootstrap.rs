@@ -58,12 +58,32 @@ pub async fn start_from_environment() -> Result<CodexActivation, AppServerError>
             environment: environment.clone(),
         })
         .map_err(|_| AppServerError::Configuration)?;
-    let host = CodexAppServerHost::prepare(AppServerConfig::from_environment(
+    let app_server = AppServerConfig::from_environment(
         resolved.relay_origin.value.clone(),
         resolved.profile.value.clone(),
         &environment,
-    )?)
-    .await?;
+    )?;
+    start_resolved(resolved, app_server).await
+}
+
+/// Starts the Codex wake observer with a fully prepared local App Server configuration.
+///
+/// The Psst relay and profile still come from the ordinary CLI/environment/config precedence.
+///
+/// # Errors
+/// Fails closed on invalid Psst configuration, missing authority, or host incompatibility.
+pub async fn start_with_app_server(
+    resolved: psst_application::ResolvedConfig,
+    app_server: AppServerConfig,
+) -> Result<CodexActivation, AppServerError> {
+    start_resolved(resolved, app_server).await
+}
+
+async fn start_resolved(
+    resolved: psst_application::ResolvedConfig,
+    app_server: AppServerConfig,
+) -> Result<CodexActivation, AppServerError> {
+    let host = CodexAppServerHost::prepare(app_server).await?;
     let paths = ProfilePaths::for_profile(
         &resolved.paths,
         &resolved.relay_origin.value,

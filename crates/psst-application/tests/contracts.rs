@@ -31,6 +31,9 @@ fn cli_help_is_golden_and_covers_required_grammar() {
     );
     for command in [
         "relay start",
+        "agent claude",
+        "agent codex",
+        "agent status",
         "health",
         "config show --effective",
         "squad list",

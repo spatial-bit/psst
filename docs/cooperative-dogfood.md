@@ -1,5 +1,8 @@
 # Cooperative dogfood guide
 
+> **Manual legacy path:** For new packages, begin with [Start here](start-here.md). This guide
+> documents the cooperative, non-waking CLI/MCP path used by older dogfood packages.
+
 This guide is for the unreleased Slice 3 candidate. It supports human CLI use and cooperative MCP
 tool calls. It does not launch, schedule, wake, or control an AI client.
 

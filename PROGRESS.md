@@ -1,8 +1,8 @@
 # Progress
 
-Current slice: 6 — mail-awake fleet dogfood (verified)
-Current gate: complete at `a52d0219bcd0aff4cbafc9faab5c9bc9ec7fbc50`
-Last reconciled: 2026-08-11
+Current slice: 7 — one-command agent fleet (active)
+Current gate: W-701 locally green; native CI and packaged agent-launch rehearsal pending
+Last reconciled: 2026-08-14
 
 ## Verified
 
@@ -54,6 +54,12 @@ Last reconciled: 2026-08-11
   [workflow 31274551562](https://github.com/spatial-bit/psst/actions/runs/31274551562).
 
 ## Active
+
+- W-701 is consolidating the normal operator and wake-harness surface behind the packaged `psst`
+  executable. The first vertical slice adds closed `agent claude|codex|status` grammar, a hidden
+  bounded `internal mcp` mode shared with the compatibility binary, process-scoped Claude Channel
+  configuration, and Codex App Server MCP argument support. Discovery and invitations remain
+  dependency-ordered W-702/W-703 work rather than silent runtime behavior.
 
 - The agent-guided setup usability follow-up now has a standalone two-agent push quickstart. A
   relay-host setup agent generates one non-secret `PSST-TEAM-HANDOFF.md`; the client setup agent
@@ -131,5 +137,7 @@ Last reconciled: 2026-08-11
 
 ## Next coordinator action
 
-Relocate the Psst development repository outside the Obsidian vault at a clean Git boundary before
-starting the next product slice. Do not tag or publish without separate exact owner authorization.
+Publish W-701 as a stacked review branch after the relay-fix/documentation base, run native CI and
+packaged Claude/Codex launch rehearsals, then complete W-702 discovery, W-703 invitations, and W-704
+manifest-covered user-local setup scripts before the W-705 native gate. Do not tag or publish a
+release without separate exact owner authorization.

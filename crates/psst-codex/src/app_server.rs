@@ -36,7 +36,9 @@ pub enum ThreadPolicy {
 #[derive(Clone, Debug)]
 pub struct AppServerConfig {
     pub command: PathBuf,
+    pub command_args: Vec<String>,
     pub mcp_command: PathBuf,
+    pub mcp_args: Vec<String>,
     pub mcp_environment: BTreeMap<String, String>,
     pub thread: ThreadPolicy,
     pub cwd: PathBuf,
@@ -114,7 +116,9 @@ impl AppServerConfig {
         let cwd = std::env::current_dir().map_err(|_| AppServerError::Configuration)?;
         Ok(Self {
             command,
+            command_args: Vec::new(),
             mcp_command,
+            mcp_args: Vec::new(),
             mcp_environment,
             thread,
             cwd,
@@ -173,7 +177,8 @@ impl CodexAppServerHost {
     /// # Errors
     /// Fails closed on schema, launch, framing, handshake, or thread-policy errors.
     pub async fn prepare(config: AppServerConfig) -> Result<Arc<Self>, AppServerError> {
-        validate_installed_schema(&config.command).await?;
+        validate_process_config(&config)?;
+        validate_installed_schema(&config.command, &config.command_args).await?;
         Ok(Arc::new(Self {
             state: Arc::new(Mutex::new(HostState {
                 config,
@@ -195,6 +200,36 @@ impl CodexAppServerHost {
         state.client.take();
         Ok(())
     }
+}
+
+fn validate_process_config(config: &AppServerConfig) -> Result<(), AppServerError> {
+    if !config.command.is_absolute()
+        || !config.command.is_file()
+        || !config.mcp_command.is_absolute()
+        || !config.mcp_command.is_file()
+        || !bounded_args(&config.command_args, 8, 4096)
+        || !bounded_args(&config.mcp_args, 4, 64)
+        || config.mcp_environment.len() > 16
+        || config.mcp_environment.iter().any(|(key, value)| {
+            key.is_empty()
+                || key.len() > 64
+                || value.len() > 4096
+                || key.chars().any(char::is_control)
+                || value.chars().any(char::is_control)
+        })
+    {
+        return Err(AppServerError::Configuration);
+    }
+    Ok(())
+}
+
+fn bounded_args(args: &[String], maximum_count: usize, maximum_bytes: usize) -> bool {
+    args.len() <= maximum_count
+        && args.iter().all(|argument| {
+            !argument.is_empty()
+                && argument.len() <= maximum_bytes
+                && !argument.chars().any(char::is_control)
+        })
 }
 
 impl ActivationHost for CodexAppServerHost {
@@ -296,6 +331,7 @@ impl AppServerClient {
     async fn launch(config: &AppServerConfig) -> Result<Self, AppServerError> {
         let mcp_override = mcp_override(config)?;
         let mut child = Command::new(&config.command)
+            .args(&config.command_args)
             .arg("app-server")
             .arg("-c")
             .arg(mcp_override)
@@ -590,8 +626,14 @@ fn mcp_override(config: &AppServerConfig) -> Result<String, AppServerError> {
         })
         .collect::<Result<Vec<_>, _>>()?
         .join(",");
+    let args = config
+        .mcp_args
+        .iter()
+        .map(|arg| serde_json::to_string(arg).map_err(|_| AppServerError::Configuration))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(",");
     Ok(format!(
-        "mcp_servers={{psst_wake={{command={command},env={{{environment}}},required=true}}}}"
+        "mcp_servers={{psst_wake={{command={command},args=[{args}],env={{{environment}}},required=true}}}}"
     ))
 }
 
@@ -825,9 +867,13 @@ where
     }
 }
 
-async fn validate_installed_schema(command: &Path) -> Result<(), AppServerError> {
+async fn validate_installed_schema(
+    command: &Path,
+    command_args: &[String],
+) -> Result<(), AppServerError> {
     let directory = tempfile::tempdir().map_err(|_| AppServerError::Schema)?;
     let status = Command::new(command)
+        .args(command_args)
         .arg("app-server")
         .arg("generate-json-schema")
         .arg("--out")
@@ -1145,7 +1191,9 @@ mod tests {
         let record = directory.path().join("thread-id");
         let base = AppServerConfig {
             command: directory.path().join("unused-codex"),
+            command_args: Vec::new(),
             mcp_command: directory.path().join("unused-mcp"),
+            mcp_args: Vec::new(),
             mcp_environment: BTreeMap::new(),
             thread: ThreadPolicy::Create {
                 record: record.clone(),
@@ -1320,7 +1368,9 @@ mod tests {
     fn scoped_mcp_override_is_closed_and_contains_no_authority() {
         let config = AppServerConfig {
             command: PathBuf::from("codex"),
+            command_args: Vec::new(),
             mcp_command: PathBuf::from("C:/Psst/psst-mcp.exe"),
+            mcp_args: vec!["internal".into(), "mcp".into()],
             mcp_environment: BTreeMap::from([
                 ("APPDATA".into(), "C:/Psst/Data".into()),
                 ("PSST_PROFILE".into(), "wake-profile".into()),
@@ -1333,12 +1383,40 @@ mod tests {
         assert!(value.starts_with("mcp_servers={psst_wake={"));
         assert!(value.ends_with(",required=true}}"));
         assert!(value.contains("command=\"C:/Psst/psst-mcp.exe\""));
+        assert!(value.contains("args=[\"internal\",\"mcp\"]"));
         assert!(value.contains("PSST_RELAY=\"http://127.0.0.1:7341/\""));
         assert!(value.contains("PSST_PROFILE=\"wake-profile\""));
         assert!(value.contains("APPDATA=\"C:/Psst/Data\""));
         for forbidden in ["authorization", "credential", "token", "secret"] {
             assert!(!value.to_ascii_lowercase().contains(forbidden));
         }
+    }
+
+    #[test]
+    fn process_configuration_bounds_commands_arguments_and_environment() {
+        let directory = tempfile::tempdir().unwrap();
+        let command = directory.path().join("codex");
+        let mcp = directory.path().join("psst");
+        std::fs::write(&command, b"fixture").unwrap();
+        std::fs::write(&mcp, b"fixture").unwrap();
+        let mut config = AppServerConfig {
+            command,
+            command_args: vec!["/d".into(), "/c".into(), "codex.cmd".into()],
+            mcp_command: mcp,
+            mcp_args: vec!["internal".into(), "mcp".into()],
+            mcp_environment: BTreeMap::from([
+                ("PSST_PROFILE".into(), "wake-profile".into()),
+                ("PSST_RELAY".into(), "http://127.0.0.1:7341".into()),
+            ]),
+            thread: ThreadPolicy::Resume("thr_1".into()),
+            cwd: directory.path().to_owned(),
+        };
+        validate_process_config(&config).unwrap();
+        config.mcp_args.push("x".repeat(65));
+        assert_eq!(
+            validate_process_config(&config),
+            Err(AppServerError::Configuration)
+        );
     }
 
     #[test]

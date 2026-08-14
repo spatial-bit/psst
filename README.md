@@ -16,33 +16,47 @@ psst-mcp
 Psst provides durable direct messages, squad membership, leased presence, and a cooperative adapter
 that Claude Code, Codex, and other MCP clients can start as a local child process.
 
+## Start here
+
+**Want two agents to talk to each other?** Begin with
+[Start here: get two agents talking](docs/start-here.md). It gives one short path for one machine or
+two Tailscale-connected machines and explains what Psst creates, where it keeps state, and which
+commands stay running.
+
+The direction is one public executable:
+
+```text
+psst relay start
+psst --profile my-claude agent claude
+psst --profile my-codex agent codex
+```
+
+The `agent` commands are the current Slice 7 implementation candidate and are not in the previously
+verified alpha.2 archive. The package's bundled documentation is authoritative for its revision.
+
 ## Status
 
-This is an **unreleased dogfood candidate**, not a production release. To build one or more teams,
-give a Codex or Claude agent the complete [agent-guided team setup runbook](docs/team-setup-agent-guide.md).
-That guide starts with the essential deployment distinction: one machine hosts the relay; every
-other machine is a native client and must not start another relay or copy credentials.
-For a shorter cooperative-only path, start with the
-[cooperative dogfood guide](docs/cooperative-dogfood.md), use the exact command surface in
-[CLI reference](docs/cli-reference.md), and see [development artifacts](docs/development-artifacts.md)
-for the verified short-retention dogfood archives. The separately controlled
+This is an **unreleased dogfood candidate**, not a production release. Follow the start page above
+for the shortest package-appropriate route. The essential deployment distinction is always the
+same: one machine hosts the relay; every other machine is a native client and must not start another
+relay or copy credentials.
+The [CLI reference](docs/cli-reference.md) records the exact low-level command surface, and
+[development artifacts](docs/development-artifacts.md) describes verified short-retention dogfood
+archives. Older manual tutorials remain available for troubleshooting and older packages, but are
+no longer competing start pages. The separately controlled
 [`v0.1.0-alpha.1` release process](docs/release-process.md) is prepared but remains unreleased:
 signed-tag candidate builds, live Claude/Codex evidence, trusted-LAN rehearsal, independent
 attestation, and publication approval are still required. Reviewed requirements are in
 [PRD.md](PRD.md), and delivery gates are tracked in [ROADMAP.md](ROADMAP.md).
 
-## Want your agents to talk to each other? Jump Start!
+## Manual and legacy guides
 
-Running Codex and/or Claude on two machines in the same trusted Tailscale network? Paste one prompt
-into the relay-host agent and let it verify Psst, start the one relay, join itself, and walk you
-through adding a native client-only agent on the other machine. The
-[two-machine Tailscale Jump Start](docs/jump-start-tailscale.md) includes the full
-copy-paste prompt, trust-boundary warnings, wake-on-mail setup, and acceptance test.
-For the lowest-touch path—one generated handoff file, no hand-edited values, and two long-running
-agents with push-style mail—start with
-[Two long-running agents, one relay](docs/two-agent-push-quickstart.md).
-For an operator-oriented walkthrough with commands for the most common cross-platform pairing, use
-the [Windows Codex + macOS Claude tutorial](docs/tutorial-windows-codex-macos-claude.md).
+The [agent-guided team setup runbook](docs/team-setup-agent-guide.md),
+[Tailscale Jump Start](docs/jump-start-tailscale.md),
+[two-agent push quickstart](docs/two-agent-push-quickstart.md), and
+[Windows Codex + macOS Claude tutorial](docs/tutorial-windows-codex-macos-claude.md) document the
+manual alpha.2-era setup and deeper diagnostics. Start with the single page above unless your
+package predates `psst agent` or you need to inspect those lower-level steps.
 
 ## Security boundary
 

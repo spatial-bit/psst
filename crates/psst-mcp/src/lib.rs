@@ -13,6 +13,29 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, timeout};
 
+/// Fixed failure classes for the process-facing configured stdio server.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConfiguredStdioError {
+    Startup,
+    Protocol,
+}
+
+/// Starts the environment-configured Psst MCP server on process stdio.
+///
+/// This is the shared implementation behind the compatibility `psst-mcp` binary and the unified
+/// `psst internal mcp` mode. Stdout remains protocol-only.
+///
+/// # Errors
+/// Returns a fixed failure class without copying configuration, protocol frames, or secrets.
+pub async fn serve_configured_stdio() -> Result<(), ConfiguredStdioError> {
+    let server = CooperativeServer::from_environment()
+        .await
+        .map_err(|_| ConfiguredStdioError::Startup)?;
+    serve_bounded_with(server, tokio::io::stdin(), tokio::io::stdout())
+        .await
+        .map_err(|_| ConfiguredStdioError::Protocol)
+}
+
 /// Exact per-JSON-line transport limits, including the trailing newline.
 pub const MAX_INBOUND_LINE_BYTES: usize = 1_048_576;
 pub const MAX_OUTBOUND_LINE_BYTES: usize = 1_048_576;

@@ -12,17 +12,20 @@ name = "psst"
 path = "src/main.rs"
 
 [dependencies]
+fs2.workspace = true
 psst-application = { path = "../psst-application" }
 psst-client = { path = "../psst-client" }
+psst-codex = { path = "../psst-codex" }
+psst-mcp = { path = "../psst-mcp" }
 psst-protocol = { path = "../psst-protocol" }
 psst-relay = { path = "../psst-relay" }
 psst-store = { path = "../psst-store" }
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["process"] }
 
 [dev-dependencies]
-tempfile.workspace = true
 psst-platform-security = { path = "../psst-platform-security" }
 
 [lints]
