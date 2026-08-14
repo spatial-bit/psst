@@ -55,6 +55,12 @@ Last reconciled: 2026-08-11
 
 ## Active
 
+- The agent-guided setup usability follow-up now has a standalone two-agent push quickstart. A
+  relay-host setup agent generates one non-secret `PSST-TEAM-HANDOFF.md`; the client setup agent
+  consumes it without manual value substitution. The journey keeps a Claude Channel session and a
+  durable Codex App Server task running, then proves automatically surfaced mail in both directions
+  without application-level model polling.
+
 - W-401 defines the client-neutral activation boundary and dependency-ordered Slice 4 plan. The
   shared engine owns coalescing, reconciliation, turn occupancy, retry/backoff, and shutdown; Claude
   Channels and Codex App Server remain thin host adapters. External contracts were checked against
