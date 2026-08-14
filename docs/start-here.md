@@ -4,9 +4,9 @@ This is the one normal entry point for Psst. You do not need a repository checko
 current working directory does not matter. Psst keeps its own state in the operating system's
 standard application-data directories.
 
-> **Availability:** `psst agent claude|codex` is a Slice 7 implementation candidate. Use it from a
-> package whose bundled documentation includes this page. The currently verified alpha.2 package
-> still uses the longer bundled `TEAM-SETUP.md` procedure.
+> **Availability:** `psst agent claude|codex` is a Slice 7 implementation candidate. Use it only
+> from a package built at the exact revision named by this page's verified workflow evidence. Older
+> alpha.2 packages use the longer bundled `TEAM-SETUP.md` procedure.
 
 ## The mental model
 
@@ -36,7 +36,9 @@ unsigned dogfood packages:
    hash mismatch.
 
 Use the same Psst version and full revision on every machine. Never substitute a locally built
-binary for one member of the package.
+binary for one member of the package. Do not reuse an old extraction merely because its version
+also says `0.1.0-alpha.2`: revision `be94226b6cacef7c655d2faab7856c2bf2032ab4` has a known Windows
+relay-serving defect and must not be used.
 
 ### 2. Put it in one stable directory
 
