@@ -885,6 +885,7 @@ fn run_child(json: bool, lan: bool) {
     wait_until(Duration::from_secs(5), || {
         TcpStream::connect(address).is_ok()
     });
+    assert_delayed_http_health(address);
     send_interrupt(&child);
     wait_for_exit(&mut child, Duration::from_secs(5));
     let status = child.wait().unwrap();
@@ -988,6 +989,27 @@ fn unused_loopback() -> SocketAddr {
     let address = listener.local_addr().unwrap();
     drop(listener);
     address
+}
+
+fn assert_delayed_http_health(address: SocketAddr) {
+    let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(2)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    thread::sleep(Duration::from_millis(100));
+    stream
+        .write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut response = [0_u8; 256];
+    let count = stream.read(&mut response).unwrap();
+    assert!(
+        response[..count].starts_with(b"HTTP/1.1 200"),
+        "relay accepted TCP but did not service delayed HTTP: {}",
+        String::from_utf8_lossy(&response[..count])
+    );
 }
 
 fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) {

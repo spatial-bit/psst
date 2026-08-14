@@ -20,6 +20,8 @@ that Claude Code, Codex, and other MCP clients can start as a local child proces
 
 This is an **unreleased dogfood candidate**, not a production release. To build one or more teams,
 give a Codex or Claude agent the complete [agent-guided team setup runbook](docs/team-setup-agent-guide.md).
+That guide starts with the essential deployment distinction: one machine hosts the relay; every
+other machine is a native client and must not start another relay or copy credentials.
 For a shorter cooperative-only path, start with the
 [cooperative dogfood guide](docs/cooperative-dogfood.md), use the exact command surface in
 [CLI reference](docs/cli-reference.md), and see [development artifacts](docs/development-artifacts.md)
@@ -28,6 +30,19 @@ for the verified short-retention dogfood archives. The separately controlled
 signed-tag candidate builds, live Claude/Codex evidence, trusted-LAN rehearsal, independent
 attestation, and publication approval are still required. Reviewed requirements are in
 [PRD.md](PRD.md), and delivery gates are tracked in [ROADMAP.md](ROADMAP.md).
+
+## Want your agents to talk to each other? Jump Start!
+
+Running Codex and/or Claude on two machines in the same trusted Tailscale network? Paste one prompt
+into the relay-host agent and let it verify Psst, start the one relay, join itself, and walk you
+through adding a native client-only agent on the other machine. The
+[two-machine Tailscale Jump Start](docs/jump-start-tailscale.md) includes the full
+copy-paste prompt, trust-boundary warnings, wake-on-mail setup, and acceptance test.
+For the lowest-touch path—one generated handoff file, no hand-edited values, and two long-running
+agents with push-style mail—start with
+[Two long-running agents, one relay](docs/two-agent-push-quickstart.md).
+For an operator-oriented walkthrough with commands for the most common cross-platform pairing, use
+the [Windows Codex + macOS Claude tutorial](docs/tutorial-windows-codex-macos-claude.md).
 
 ## Security boundary
 

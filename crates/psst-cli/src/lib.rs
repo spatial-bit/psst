@@ -96,8 +96,11 @@ struct ParseError {
 
 /// Runs the process command line and writes only through the frozen stdout/stderr boundary.
 pub async fn run_process(arguments: impl IntoIterator<Item = OsString>) -> ExitCode {
-    let mut stdout = io::stdout().lock();
-    let mut stderr = io::stderr().lock();
+    // Do not hold process-wide output locks across asynchronous command execution. Relay request
+    // tracing can run on another Tokio worker; a long-lived stderr lock here would block that
+    // worker before Hyper can publish the completed response.
+    let mut stdout = io::stdout();
+    let mut stderr = io::stderr();
     let code = run_with_io(arguments, &mut stdout, &mut stderr).await;
     ExitCode::from(code)
 }
@@ -759,18 +762,35 @@ async fn run_relay(
 #[cfg(windows)]
 async fn shutdown_signal() {
     let Ok(mut ctrl_break) = tokio::signal::windows::ctrl_break() else {
-        let _ = tokio::signal::ctrl_c().await;
+        wait_for_successful_signal(tokio::signal::ctrl_c()).await;
         return;
     };
     // Interactive Ctrl-C is supported. The child-process test uses targeted Ctrl-Break because
     // Windows cannot safely target CTRL_C_EVENT at one process without broadcasting to its console.
-    let _ = first_shutdown_signal(tokio::signal::ctrl_c(), ctrl_break.recv()).await;
+    let _ = first_shutdown_signal(
+        wait_for_successful_signal(tokio::signal::ctrl_c()),
+        wait_for_present_signal(ctrl_break.recv()),
+    )
+    .await;
 }
 
 #[cfg(not(windows))]
 async fn shutdown_signal() {
     // Tokio's Ctrl-C future is backed by SIGINT on Unix.
-    let _ = tokio::signal::ctrl_c().await;
+    wait_for_successful_signal(tokio::signal::ctrl_c()).await;
+}
+
+async fn wait_for_successful_signal<T, E>(signal: impl Future<Output = Result<T, E>>) {
+    if signal.await.is_err() {
+        std::future::pending::<()>().await;
+    }
+}
+
+#[cfg(any(windows, test))]
+async fn wait_for_present_signal<T>(signal: impl Future<Output = Option<T>>) {
+    if signal.await.is_none() {
+        std::future::pending::<()>().await;
+    }
 }
 
 #[cfg(any(windows, test))]
@@ -1823,6 +1843,26 @@ mod tests {
         assert!(
             first_shutdown_signal(std::future::ready(()), std::future::pending::<Option<()>>())
                 .await
+        );
+    }
+
+    #[tokio::test]
+    async fn unavailable_signal_sources_do_not_request_shutdown() {
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(20),
+                wait_for_successful_signal(std::future::ready(Err::<(), ()>(())))
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(20),
+                wait_for_present_signal(std::future::ready(None::<()>))
+            )
+            .await
+            .is_err()
         );
     }
 
