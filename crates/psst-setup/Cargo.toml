@@ -1,0 +1,40 @@
+[package]
+name = "psst-setup"
+description = "User-local bootstrap installer and updater for Psst"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "psst-setup"
+path = "src/main.rs"
+
+[[bin]]
+name = "psst-channel-sign"
+path = "src/channel_sign.rs"
+
+[dependencies]
+base64.workspace = true
+ed25519-dalek.workspace = true
+zeroize.workspace = true
+fs2.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_UI_WindowsAndMessaging"] }
+winreg = "0.55.0"
+
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"

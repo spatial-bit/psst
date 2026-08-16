@@ -1,0 +1,138 @@
+name: Installer channel
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/installer-channel.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/psst-setup/**"
+      - "crates/psst-cli/**"
+      - "scripts/configure-update-signing-key.py"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Replace the public dogfood-channel assets from exact main
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify-windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install pinned Rust toolchain
+        shell: pwsh
+        run: rustup toolchain install 1.89.0 --profile minimal --component clippy --no-self-update
+      - name: Select pinned Rust toolchain
+        shell: pwsh
+        run: rustup override set 1.89.0
+      - name: Test and lint installer
+        shell: pwsh
+        run: |
+          cargo test --locked -p psst-setup
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo clippy --locked -p psst-setup --all-targets -- -D warnings
+      - name: Build standalone installer candidate
+        shell: pwsh
+        run: cargo build --locked --release -p psst-setup --bin psst-setup
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: psst-setup-${{ github.sha }}-windows-x86_64
+          path: target/release/psst-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-dogfood-channel:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
+    needs: verify-windows-installer
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PSST_UPDATE_SIGNING_KEY: ${{ secrets.PSST_UPDATE_SIGNING_KEY }}
+      CHANNEL_TAG: dogfood-channel
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install pinned Rust toolchain
+        shell: pwsh
+        run: rustup toolchain install 1.89.0 --profile minimal --no-self-update
+      - name: Select pinned Rust toolchain
+        shell: pwsh
+        run: rustup override set 1.89.0
+      - name: Require exact main and signing key
+        shell: pwsh
+        run: |
+          if (-not $env:PSST_UPDATE_SIGNING_KEY) { throw 'PSST_UPDATE_SIGNING_KEY is unavailable' }
+          $remote = git ls-remote origin refs/heads/main
+          $remoteSha = ($remote -split "`t")[0]
+          if ($remoteSha -ne $env:GITHUB_SHA) { throw 'workflow revision is not exact current main' }
+      - name: Build unified Psst, installer, and signer
+        shell: pwsh
+        run: |
+          cargo build --locked --release -p psst-cli -p psst-setup `
+            --bin psst --bin psst-setup --bin psst-channel-sign
+      - name: Create signed channel
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path publish | Out-Null
+          Copy-Item target/release/psst.exe publish/psst.exe
+          Copy-Item target/release/psst-setup.exe publish/psst-setup.exe
+          $assetBase = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:CHANNEL_TAG"
+          $runUrl = "https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          target/release/psst-channel-sign.exe `
+            --version 0.1.0-alpha.2 `
+            --revision $env:GITHUB_SHA `
+            --publication-run $runUrl `
+            --psst-url "$assetBase/psst.exe" `
+            --psst publish/psst.exe `
+            --output publish/windows-x86_64.json
+          $names = @('psst-setup.exe', 'psst.exe', 'windows-x86_64.json')
+          $lines = foreach ($name in $names) {
+            $hash = (Get-FileHash -Algorithm SHA256 "publish/$name").Hash.ToLowerInvariant()
+            "$hash  $name"
+          }
+          [IO.File]::WriteAllLines((Join-Path $PWD 'publish/SHA256SUMS'), $lines)
+      - name: Create or update public dogfood installer channel
+        shell: pwsh
+        run: |
+          gh release view $env:CHANNEL_TAG --repo $env:GITHUB_REPOSITORY 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:CHANNEL_TAG --repo $env:GITHUB_REPOSITORY `
+              --target $env:GITHUB_SHA --prerelease `
+              --title 'Psst dogfood installer channel' `
+              --notes 'Moving, signed dogfood installer channel. Psst remains trusted-network alpha software.'
+          }
+          gh release upload $env:CHANNEL_TAG --repo $env:GITHUB_REPOSITORY --clobber `
+            publish/psst-setup.exe publish/psst.exe publish/windows-x86_64.json publish/SHA256SUMS
+      - name: Clean-download installer rehearsal
+        shell: pwsh
+        run: |
+          $assetBase = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:CHANNEL_TAG"
+          New-Item -ItemType Directory -Path downloaded,installed | Out-Null
+          Invoke-WebRequest "$assetBase/psst-setup.exe?run=$env:GITHUB_RUN_ID" -OutFile downloaded/psst-setup.exe
+          Invoke-WebRequest "$assetBase/SHA256SUMS?run=$env:GITHUB_RUN_ID" -OutFile downloaded/SHA256SUMS
+          $expected = (Get-Content downloaded/SHA256SUMS | Where-Object { $_ -match '  psst-setup.exe$' }) -split '  '
+          if ($expected.Count -ne 2) { throw 'installer checksum entry missing' }
+          $actual = (Get-FileHash -Algorithm SHA256 downloaded/psst-setup.exe).Hash.ToLowerInvariant()
+          if ($actual -ne $expected[0]) { throw 'downloaded installer hash mismatch' }
+          downloaded/psst-setup.exe --yes --no-path --install-dir "$PWD/installed"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = (& installed/psst.exe --version 2>&1) -join ''
+          if ($version.Trim() -ne 'psst 0.1.0-alpha.2') { throw 'installed binary version mismatch' }
+          $installedHash = (Get-FileHash -Algorithm SHA256 installed/psst.exe).Hash.ToLowerInvariant()
+          $publishedHash = (Get-FileHash -Algorithm SHA256 publish/psst.exe).Hash.ToLowerInvariant()
+          if ($installedHash -ne $publishedHash) { throw 'installed binary is not the published binary' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: psst-dogfood-channel-${{ github.sha }}-evidence
+          path: |
+            publish/windows-x86_64.json
+            publish/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
