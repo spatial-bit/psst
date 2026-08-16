@@ -5,6 +5,7 @@ use fs2::FileExt;
 use reqwest::{Client, Url, redirect};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(windows)]
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -636,6 +637,7 @@ fn update_user_path(dir: &Path) -> Result<bool, SetupError> {
     Ok(true)
 }
 
+#[cfg(windows)]
 fn append_windows_path(current: &str, wanted: &str) -> Option<String> {
     if current
         .split(';')
@@ -810,6 +812,7 @@ mod tests {
         assert!(serde_json::from_value::<ChannelManifest>(json).is_err());
     }
 
+    #[cfg(windows)]
     #[test]
     fn windows_path_append_is_idempotent_and_preserves_existing_expansions() {
         let current = r"%USERPROFILE%\bin;C:\Tools";
