@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install pinned Rust toolchain
         shell: pwsh
-        run: rustup toolchain install 1.89.0 --profile minimal --no-self-update
+        run: rustup toolchain install 1.89.0 --profile minimal --component clippy --no-self-update
       - name: Select pinned Rust toolchain
         shell: pwsh
         run: rustup override set 1.89.0
