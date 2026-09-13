@@ -18,6 +18,7 @@ use crate::{
 pub struct SendByName {
     pub id: MessageId,
     pub recipient: MemberName,
+    pub recipient_membership_id: Option<MembershipId>,
     pub body: MessageBody,
     pub priority: MessagePriority,
     pub dedupe_key: DedupeKey,
@@ -605,6 +606,13 @@ impl Store {
             .transpose()?;
 
         if let Some(recipient_id) = existing_recipient {
+            if request
+                .recipient_membership_id
+                .as_ref()
+                .is_some_and(|pin| pin != &recipient_id)
+            {
+                return Err(RepositoryError::IdempotencyConflict);
+            }
             let candidate = send_from_name(
                 request,
                 &identity.squad,
@@ -640,6 +648,13 @@ impl Store {
             .ok_or(RepositoryError::RecipientNotFound)?
             .parse()
             .map_err(|_| RepositoryError::InvalidStoredData)?;
+        if request
+            .recipient_membership_id
+            .as_ref()
+            .is_some_and(|pin| pin != &recipient_id)
+        {
+            return Err(RepositoryError::RecipientNotFound);
+        }
         let send = send_from_name(
             request,
             &identity.squad,
@@ -1301,6 +1316,79 @@ mod tests {
             dedupe_key: DedupeKey::new(format!("dedupe-{suffix}")).unwrap(),
             created_at: millis(now),
         }
+    }
+
+    #[test]
+    fn recipient_pin_prevents_name_reuse_and_preserves_committed_replay() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("pin.db");
+        let mut store = Store::open(&path).unwrap();
+        let (_, alice, token) = store
+            .join_and_claim(&join_request("alice", "alice", 100))
+            .unwrap()
+            .into_parts();
+        let (old, bob, bob_token) = store
+            .join_and_claim(&join_request("bob", "worker", 100))
+            .unwrap()
+            .into_parts();
+        let sender = AuthenticatedSession {
+            instance_id: &alice.id,
+            resume_token: &token,
+            now: millis(110),
+        };
+        let mut request = SendByName {
+            id: MessageId::new("msg_pinned").unwrap(),
+            recipient: MemberName::new("worker").unwrap(),
+            recipient_membership_id: Some(old.id.clone()),
+            body: MessageBody::new("synthetic").unwrap(),
+            priority: MessagePriority::Normal,
+            dedupe_key: DedupeKey::new("pinned").unwrap(),
+            reply_to: None,
+            correlation_id: None,
+        };
+        let committed = store.authenticated_send_by_name(&sender, &request).unwrap();
+        store
+            .authenticated_leave(
+                &AuthenticatedSession {
+                    instance_id: &bob.id,
+                    resume_token: &bob_token,
+                    now: millis(111),
+                },
+                &SquadName::new("alpha").unwrap(),
+            )
+            .unwrap();
+        let (new, _, _) = store
+            .join_and_claim(&join_request("replacement", "worker", 112))
+            .unwrap()
+            .into_parts();
+        drop(store);
+        let mut store = Store::open(&path).unwrap();
+        let replay = store.authenticated_send_by_name(&sender, &request).unwrap();
+        assert!(replay.idempotent_replay);
+        assert_eq!(replay.message.message.id, committed.message.message.id);
+        request.recipient_membership_id = Some(new.id.clone());
+        assert!(matches!(
+            store.authenticated_send_by_name(&sender, &request),
+            Err(RepositoryError::IdempotencyConflict)
+        ));
+        request.id = MessageId::new("msg_new").unwrap();
+        request.dedupe_key = DedupeKey::new("new").unwrap();
+        request.recipient_membership_id = Some(old.id);
+        assert!(matches!(
+            store.authenticated_send_by_name(&sender, &request),
+            Err(RepositoryError::RecipientNotFound)
+        ));
+        request.recipient_membership_id = Some(new.id.clone());
+        assert_eq!(
+            store
+                .authenticated_send_by_name(&sender, &request)
+                .unwrap()
+                .message
+                .message
+                .semantics
+                .recipient,
+            new.id
+        );
     }
 
     #[test]

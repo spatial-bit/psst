@@ -1700,6 +1700,11 @@ async fn send_message(
             SendByName {
                 id: identifier("msg", MessageId::new)?,
                 recipient: parsed(MemberName::new(request.recipient))?,
+                recipient_membership_id: request
+                    .recipient_membership_id
+                    .map(MembershipId::new)
+                    .transpose()
+                    .map_err(|_| ApiFailure(ApiErrorCode::InvalidRequest))?,
                 body: parsed(MessageBody::new(request.body))?,
                 priority: priority(request.priority),
                 dedupe_key: parsed(DedupeKey::new(request.dedupe_key))?,

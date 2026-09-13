@@ -124,6 +124,9 @@ impl Validate for HeartbeatRequest {
 impl Validate for SendMessageRequest {
     fn validate(&self) -> Result<(), InvalidValue> {
         MemberName::new(&self.recipient)?;
+        if let Some(pin) = &self.recipient_membership_id {
+            MembershipId::new(pin)?;
+        }
         MessageBody::new(&self.body)?;
         DedupeKey::new(&self.dedupe_key)?;
         if let Some(value) = &self.reply_to {
@@ -556,6 +559,7 @@ mod tests {
             .is_err()
         );
         let base = SendMessageRequest {
+            recipient_membership_id: None,
             recipient: "recipient".into(),
             body: "body".into(),
             priority: MessagePriorityDto::Normal,
@@ -564,6 +568,9 @@ mod tests {
             correlation_id: None,
         };
         let mut invalid = Vec::new();
+        let mut value = base.clone();
+        value.recipient_membership_id = Some("bad".into());
+        invalid.push(value);
         let mut value = base.clone();
         value.recipient = "Bad".into();
         invalid.push(value);

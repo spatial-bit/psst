@@ -580,6 +580,7 @@ impl Client {
     ) -> Result<PreparedSend, Error> {
         let key = dedupe_key()?;
         let request = SendMessageRequest {
+            recipient_membership_id: None,
             recipient,
             body,
             priority,
@@ -1058,6 +1059,7 @@ mod tests {
         ))
         .unwrap();
         let request = SendMessageRequest {
+            recipient_membership_id: None,
             recipient: "worker".into(),
             body: "ok".into(),
             priority: MessagePriorityDto::Normal,
@@ -1701,6 +1703,7 @@ mod tests {
         );
         let base = server(app).await;
         let request = SendMessageRequest {
+            recipient_membership_id: None,
             recipient: "worker".into(),
             body: "hello".into(),
             priority: MessagePriorityDto::Normal,
@@ -1736,6 +1739,89 @@ mod tests {
             Err(Error::Timeout)
         ));
         assert!(started.elapsed() < Duration::from_millis(250));
+    }
+
+    #[tokio::test]
+    async fn selected_membership_survives_name_reuse_without_retargeting() {
+        let directory = tempfile::tempdir().unwrap();
+        let (worker, join) =
+            psst_relay::StoreWorker::start(&directory.path().join("pin.db"), 32).unwrap();
+        let (base, server) = server_with_handle(psst_relay::router(worker.clone())).await;
+        let client = Client::new(&base, ClientConfig::default()).unwrap();
+        client
+            .create_squad(&CreateSquadRequest {
+                name: "team".into(),
+                mission: "selected member".into(),
+            })
+            .await
+            .unwrap();
+        let join_request = |name: &str| JoinSquadRequest {
+            name: name.into(),
+            role: "role".into(),
+            mode: AgentModeDto::Cooperative,
+            client: ClientMetadata {
+                kind: "test".into(),
+                hostname: None,
+                version: None,
+            },
+            mission: None,
+        };
+        let human = client.join("team", &join_request("human")).await.unwrap();
+        let old = client.join("team", &join_request("worker")).await.unwrap();
+        let mut request = SendMessageRequest {
+            recipient: "worker".into(),
+            recipient_membership_id: Some(old.response.membership_id.clone()),
+            body: "synthetic".into(),
+            priority: MessagePriorityDto::Normal,
+            dedupe_key: "selected".into(),
+            reply_to: None,
+            correlation_id: Some("team-exchange".into()),
+        };
+        let first = client
+            .send_with_request(&request, &human.credential)
+            .await
+            .unwrap();
+        client.leave("team", &old.credential).await.unwrap();
+        let new = client.join("team", &join_request("worker")).await.unwrap();
+        let replay = client
+            .send_with_request(&request, &human.credential)
+            .await
+            .unwrap();
+        assert!(replay.idempotent_replay);
+        assert_eq!(first.message.id, replay.message.id);
+        request.dedupe_key = "second-selection".into();
+        assert!(matches!(
+            client.send_with_request(&request, &human.credential).await,
+            Err(Error::Api {
+                code: psst_protocol::ApiErrorCode::RecipientNotFound,
+                ..
+            })
+        ));
+        assert!(
+            client
+                .inbox(10, 0, &new.credential)
+                .await
+                .unwrap()
+                .messages
+                .is_empty()
+        );
+        request.recipient_membership_id = Some(new.response.membership_id.clone());
+        client
+            .send_with_request(&request, &human.credential)
+            .await
+            .unwrap();
+        assert_eq!(
+            client
+                .inbox(10, 0, &new.credential)
+                .await
+                .unwrap()
+                .messages
+                .len(),
+            1
+        );
+        worker.stop().unwrap();
+        join.join().unwrap().unwrap();
+        server.abort();
     }
 
     #[tokio::test]
@@ -1910,6 +1996,7 @@ mod tests {
 
         let same_key = "same-client-operation".to_owned();
         let request = |body: &str| SendMessageRequest {
+            recipient_membership_id: None,
             recipient: "bob".into(),
             body: body.into(),
             priority: MessagePriorityDto::Normal,

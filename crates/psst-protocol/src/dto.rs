@@ -194,6 +194,9 @@ response!(HeartbeatResponse {
 #[serde(deny_unknown_fields)]
 pub struct SendMessageRequest {
     pub recipient: String,
+    /// Optional identity pin from a previously selected roster entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipient_membership_id: Option<String>,
     #[schema(max_length = 65536)]
     pub body: String,
     #[serde(default)]
