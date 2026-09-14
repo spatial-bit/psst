@@ -10,6 +10,9 @@ Both wake adapters use the same operator-visible lifecycle:
 3. Inspect its last published state with `psst --profile <profile> harness status`.
 4. Stop it with Ctrl+C or by closing the owning interactive client.
 
+Before step 1, prove the profile through ordinary cooperative MCP. Then stop that MCP owner cleanly.
+The wake harness replaces it as owner; never run two adapter processes with the same profile.
+
 The status command is passive. It does not acquire the profile lock, contact the relay, wake a
 client, or mutate configuration. Its JSON envelope reports the adapter, activation phase, retry
 attempt, aggregate pending count and priority, owner process ID, observation timestamp, and a
@@ -37,6 +40,11 @@ The exact development flag is owned by Claude Code and may change; confirm it ag
 edit Claude configuration, start Claude, use `claude -p`, or inject input. Closing the interactive
 session stops the child and releases profile ownership.
 
+The startup banner must confirm Channel delivery from the exact named server. A wake carries only
+bounded metadata. Claude calls `message_receive` to fetch authoritative mail and calls
+`message_acknowledge` only after completing it. Permission skipping is a separate, explicit
+operator choice; it is not required by Psst.
+
 See [Claude Code Channel harness](claude-channel.md) for the wake and acknowledgement contract.
 
 ## Codex App Server
@@ -51,6 +59,10 @@ psst-codex
 
 It stays in the foreground and stops on Ctrl+C. The adapter creates a process-scoped MCP child for
 each turn and does not alter Codex's global MCP registrations.
+
+Use an existing durable Codex task ID unless the operator deliberately selects the documented
+one-time creation policy. On wake, that task reads the authoritative inbox, performs the work, and
+acknowledges only completed messages.
 
 ## Restart and recovery
 

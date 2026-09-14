@@ -32,3 +32,13 @@ verifying mail behavior, operating the hub, troubleshooting, and cleaning up.
   wake, replay/ack, restart, troubleshooting, and cleanup contract and has a negative regression.
   Every native and clean-downloaded job validates that bundled guide before running the real fleet
   journey in [workflow 31454840050](https://github.com/spatial-bit/psst/actions/runs/31454840050).
+- A post-verification usability candidate adds `docs/two-agent-push-quickstart.md`: one standalone
+  relay-host prompt, one generated non-secret handoff file, one client prompt, and one bidirectional
+  push-delivery test. It removes hand-edited IP, revision, path, profile, squad, and Codex task-ID
+  substitutions by assigning discovery, generation, and the explicit App Server thread-record
+  policy to the setup agents. It describes the user-facing goal as two long-running sessions with
+  automatically surfaced mail, while retaining body-free wake, explicit retrieval/acknowledgement,
+  single profile ownership, and trusted-tailnet boundaries. The prompts are independent of the
+  caller's current directory: each agent creates a conventional platform-specific Psst home and
+  confines downloads, packages, launchers, logs, handoff, relay data, and non-secret state beneath
+  it without requiring a source checkout.

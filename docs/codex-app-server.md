@@ -19,6 +19,10 @@ For the shared foreground start, status, stop, and restart workflow, see
 
 ## Configuration
 
+First prove the membership using ordinary cooperative MCP, then stop that owner cleanly. The
+foreground `psst-codex` process becomes the sole owner of the profile. Never leave a normal MCP
+registration and `psst-codex` running against the same profile.
+
 Set the ordinary `PSST_RELAY` and `PSST_PROFILE` values for an already joined profile, plus:
 
 - `PSST_CODEX_APP_SERVER=1` — exact opt-in;

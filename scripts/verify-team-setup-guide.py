@@ -27,20 +27,33 @@ REQUIRED_CONTRACT = (
     "One relay is a hub for many independent squads.",
     "A Psst profile represents exactly one relay-and-squad membership.",
     "This is cooperative squad isolation, not hostile multi-tenant security.",
+    "### Relay host versus client machines",
+    "Exactly one machine runs `psst relay start`",
+    "Every other machine is a **client machine**",
+    "Never copy a profile or credential record between machines.",
+    "Windows x64, Codex",
+    "Apple Silicon macOS, Claude Code",
     "any process that can reach the relay",
     "one profile and one owning adapter process",
     "MANIFEST.json",
     "SBOM.spdx.json",
+    'SHA256("<version>:<revision>")',
     ".\\psst.exe --version",
     "./psst --version",
+    "psst-mcp` is a protocol-only stdio server",
+    "serverInfo.version",
     ".\\psst.exe relay start --data-dir $RelayData",
     "./psst relay start --data-dir \"$RELAY_DATA\"",
     "--allow-lan",
     "--profile research-codex squad join research",
     "codex mcp add psst-research-codex",
     "claude mcp add --scope local",
+    "Do not start a relay and do not create the squad on this client.",
     "PSST_CLAUDE_CHANNEL=enabled",
     "PSST_CODEX_APP_SERVER=1",
+    "Never run two adapter processes with the same profile.",
+    "--dangerously-load-development-channels server:psst-research-claude-b",
+    "existing durable Codex task ID",
     "message_receive",
     "message_acknowledge",
     "do not blindly repeat it from a new CLI process",
@@ -81,6 +94,8 @@ def main() -> None:
         text,
     ):
         raise RuntimeError("team setup guide contains credential-shaped material")
+    if ".\\psst-mcp.exe --version" in text or "./psst-mcp --version" in text:
+        raise RuntimeError("team setup guide invokes protocol-only psst-mcp as a human CLI")
 
 
 if __name__ == "__main__":

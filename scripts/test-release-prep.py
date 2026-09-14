@@ -98,6 +98,14 @@ def validate_team_setup_guide_contract() -> None:
             encoding="utf-8",
         )
         run("verify-team-setup-guide.py", "--guide", broken, success=False)
+        broken.write_text(
+            guide.read_text(encoding="utf-8").replace(
+                ".\\psst.exe --version",
+                ".\\psst.exe --version\n.\\psst-mcp.exe --version",
+            ),
+            encoding="utf-8",
+        )
+        run("verify-team-setup-guide.py", "--guide", broken, success=False)
 
 
 def main() -> None:
