@@ -126,3 +126,18 @@ Last reconciled: 2026-08-11
 
 Relocate the Psst development repository outside the Obsidian vault at a clean Git boundary before
 starting the next product slice. Do not tag or publish without separate exact owner authorization.
+
+## Sleeve team integration candidate — 2026-09-13
+
+Optional recipient membership pins are implemented on `feat/recipient-membership-pin`.
+They prevent queued selections from silently targeting a replacement that reuses a
+name, while preserving exact committed replay after leave/reopen. No schema or
+credential change. See [the contract](docs/recipient-membership-pin.md).
+
+Local macOS verification: Rust1.89 full workspace tests passed295/failed0/ignored4;
+strict workspace all-target Clippy passed; installed Rust1.92 formatting check passed
+(the local1.89 toolchain has no rustfmt component). Real local HTTP/typed-client and
+store tests cover matching pins, name reuse rejection, idempotency conflicts and
+original-delivery replay. Cross-platform CI and publication remain unverified.
+GitHub CLI has no authenticated account and git push dry-run failed authentication;
+no public PR or dependency-update claim is made. Existing release gates are unchanged.

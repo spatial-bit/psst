@@ -414,6 +414,11 @@ components:
           minLength: 1
           pattern: ^[a-z0-9](?:[a-z0-9_.-]*[a-z0-9])?$
           type: string
+        recipient_membership_id:
+          description: Optional identity pin from a previously selected roster entry.
+          type:
+          - string
+          - 'null'
         reply_to:
           maxLength: 128
           type:
